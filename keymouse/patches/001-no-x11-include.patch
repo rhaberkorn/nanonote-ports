@@ -1,0 +1,10 @@
+--- a/src/shortcut.h	2010-09-25 20:29:03.237575472 +0200
++++ b/src/shortcut.h	2010-09-25 20:29:20.167570555 +0200
+@@ -26,7 +26,6 @@
+ #define SHORTCUT_H
+ 
+ #include <string>
+-#include <X11/Xlib.h>
+ #include "device.h"
+ 
+ /*! \brief Valid actions for config file

@@ -1,0 +1,11 @@
+--- a/Makefile.defaults	2010-10-10 18:49:57.849134975 +0200
++++ b/Makefile.defaults	2010-10-10 18:50:32.767910968 +0200
+@@ -83,7 +83,7 @@
+ NETSURF_USE_LIBICONV_PLUG := YES
+ 
+ # Initial CFLAGS. Optimisation level etc. tend to be target specific.
+-CFLAGS := 
++CFLAGS += $(CPPFLAGS)
+ 
+ # Default installation/execution prefix
+ PREFIX ?= /usr/local

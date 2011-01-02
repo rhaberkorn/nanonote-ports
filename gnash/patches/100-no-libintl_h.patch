@@ -1,0 +1,11 @@
+--- a/libbase/gettext.h	2010-09-28 04:49:35.105403121 +0200
++++ b/libbase/gettext.h	2010-09-28 04:50:42.844171463 +0200
+@@ -43,7 +43,7 @@
+ #if defined(__cplusplus) && defined(__GNUG__) && (__GNUC__ >= 3)
+ # include <cstdlib>
+ # if (__GLIBC__ >= 2) || _GLIBCXX_HAVE_LIBINTL_H
+-#  include <libintl.h>
++//#  include <libintl.h>
+ # endif
+ #endif
+ 

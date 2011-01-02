@@ -1,0 +1,47 @@
+--- a/client/options.c	2010-10-05 02:21:47.218844129 +0200
++++ b/client/options.c	2010-10-05 02:27:49.427604885 +0200
+@@ -413,9 +413,15 @@
+ 
+ /* gui-sdl client specific options. */
+ char gui_sdl_default_theme_name[512] = FC_SDL_DEFAULT_THEME_NAME;
++#ifdef SMALL_SCREEN
++bool gui_sdl_fullscreen = TRUE;
++int gui_sdl_screen_width = 320;
++int gui_sdl_screen_height = 240;
++#else
+ bool gui_sdl_fullscreen = FALSE;
+ int gui_sdl_screen_width = 640;
+ int gui_sdl_screen_height = 480;
++#endif
+ 
+ /* gui-win32 client specific options. */
+ bool gui_win32_better_fog = TRUE;
+@@ -996,6 +1002,20 @@
+                   "Serif 10", NULL),
+ 
+   /* gui-sdl client specific options. */
++#ifdef SMALL_SCREEN
++  GEN_BOOL_OPTION(gui_sdl_fullscreen, N_("Full Screen"), 
++                  N_("If this option is set the client will use the "
++                     "whole screen area for drawing"),
++                  COC_INTERFACE, GUI_SDL, TRUE, NULL),
++  GEN_INT_OPTION(gui_sdl_screen_width, N_("Screen width"),
++                 N_("This option saves the width of the selected screen "
++                    "resolution"),
++                 COC_INTERFACE, GUI_SDL, 320, 320, 3200, NULL),
++  GEN_INT_OPTION(gui_sdl_screen_height, N_("Screen height"),
++                 N_("This option saves the height of the selected screen "
++                    "resolution"),
++                 COC_INTERFACE, GUI_SDL, 240, 240, 2400, NULL),
++#else
+   GEN_BOOL_OPTION(gui_sdl_fullscreen, N_("Full Screen"), 
+                   N_("If this option is set the client will use the "
+                      "whole screen area for drawing"),
+@@ -1008,6 +1028,7 @@
+                  N_("This option saves the height of the selected screen "
+                     "resolution"),
+                  COC_INTERFACE, GUI_SDL, 480, 240, 2400, NULL),
++#endif
+ 
+   /* gui-win32 client specific options. */
+   GEN_BOOL_OPTION(gui_win32_better_fog,

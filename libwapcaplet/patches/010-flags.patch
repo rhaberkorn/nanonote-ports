@@ -1,0 +1,11 @@
+--- a/Makefile	2010-10-10 17:41:56.469136747 +0200
++++ b/Makefile	2010-10-10 17:42:11.929143955 +0200
+@@ -19,7 +19,7 @@
+   WARNFLAGS := $(WARNFLAGS) -Werror
+ endif
+ CFLAGS := -D_BSD_SOURCE -I$(CURDIR)/include/ \
+-	-I$(CURDIR)/src $(WARNFLAGS) $(CFLAGS)
++	-I$(CURDIR)/src $(WARNFLAGS) $(CFLAGS) $(CPPFLAGS)
+ ifneq ($(GCCVER),2)
+   CFLAGS := $(CFLAGS) -std=c99
+ else

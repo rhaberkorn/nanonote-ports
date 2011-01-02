@@ -1,0 +1,171 @@
+--- a/client/gui-sdl/gui_main.c	2010-10-05 02:45:33.008848029 +0200
++++ b/client/gui-sdl/gui_main.c	2010-10-07 13:17:01.548258233 +0200
+@@ -78,6 +78,10 @@
+ 
+ #include "gui_main.h"
+ 
++#ifdef KBDMOUSE
++#include KBDMOUSE
++#endif
++
+ #define UNITS_TIMER_INTERVAL 128	/* milliseconds */
+ #define MAP_SCROLL_TIMER_INTERVAL 500
+ 
+@@ -496,6 +500,108 @@
+   return(1);
+ }
+ 
++#ifdef KBDMOUSE
++
++int keyboard_mouse(SDL_Event *event)
++{
++  SDL_Event new;
++  int x, y;
++
++  switch (event->type) {
++    case SDL_KEYDOWN:
++      switch ((int)event->key.keysym.sym) {
++        case KBDMOUSE_LEFT_CLICK:
++        case KBDMOUSE_MIDDLE_CLICK:
++        case KBDMOUSE_RIGHT_CLICK:
++          SDL_GetMouseState(&x, &y);
++
++          new = (SDL_Event) {
++            .type = SDL_MOUSEBUTTONDOWN,
++            .button = {
++              .type = SDL_MOUSEBUTTONDOWN,
++              .which = 0,
++              .state = SDL_PRESSED,
++              .x = (Uint16)x,
++              .y = (Uint16)y
++            }
++          };
++          switch ((int)event->key.keysym.sym) {
++            case KBDMOUSE_LEFT_CLICK:   new.button.button = SDL_BUTTON_LEFT; break;
++            case KBDMOUSE_MIDDLE_CLICK: new.button.button = SDL_BUTTON_MIDDLE; break;
++            case KBDMOUSE_RIGHT_CLICK:  new.button.button = SDL_BUTTON_RIGHT; break;
++          }
++
++          SDL_PushEvent(&new);
++        return 0;
++
++        case KBDMOUSE_UP:
++        case KBDMOUSE_DOWN:
++        case KBDMOUSE_LEFT:
++        case KBDMOUSE_RIGHT:
++           SDL_GetMouseState(&x, &y);
++
++           switch ((int)event->key.keysym.sym) {
++              case KBDMOUSE_UP:    y -= KBDMOUSE_STEP; break;
++              case KBDMOUSE_DOWN:  y += KBDMOUSE_STEP; break;
++              case KBDMOUSE_RIGHT: x += KBDMOUSE_STEP; break;
++              case KBDMOUSE_LEFT:  x -= KBDMOUSE_STEP; break;
++           }
++
++           SDL_WarpMouse((Uint16)x, (Uint16)y);
++        return 0;
++      }
++    break;
++
++    case SDL_KEYUP:
++      switch ((int)event->key.keysym.sym) {
++        case KBDMOUSE_LEFT_CLICK:
++        case KBDMOUSE_MIDDLE_CLICK:
++        case KBDMOUSE_RIGHT_CLICK:
++          SDL_GetMouseState(&x, &y);
++
++          new = (SDL_Event) {
++            .type = SDL_MOUSEBUTTONUP,
++            .button = {
++              .type = SDL_MOUSEBUTTONUP,
++              .which = 0,
++              .state = SDL_RELEASED,
++              .x = (Uint16)x,
++              .y = (Uint16)y
++            }
++          };
++          switch ((int)event->key.keysym.sym) {
++            case KBDMOUSE_LEFT_CLICK:   new.button.button = SDL_BUTTON_LEFT; break;
++            case KBDMOUSE_MIDDLE_CLICK: new.button.button = SDL_BUTTON_MIDDLE; break;
++            case KBDMOUSE_RIGHT_CLICK:  new.button.button = SDL_BUTTON_RIGHT; break;
++          }
++
++          SDL_PushEvent(&new);
++        return 0;
++
++        case KBDMOUSE_UP:
++        case KBDMOUSE_DOWN:
++        case KBDMOUSE_LEFT:
++        case KBDMOUSE_RIGHT:
++        return 0;
++      }
++    break;
++
++    default:
++    break;
++  }
++
++  return -1;
++}
++
++#else
++
++int keyboard_mouse(SDL_Event *event __attribute__((unused)))
++{
++  return -1;
++}
++
++#endif
++
+ /**************************************************************************
+ ...
+ **************************************************************************/
+@@ -596,6 +702,9 @@
+     
+     while (SDL_PollEvent(&Main.event) == 1) {
+       
++      if (!keyboard_mouse(&Main.event))
++        continue;
++      
+       switch (Main.event.type) {
+         
+         case SDL_QUIT:
+@@ -763,6 +872,10 @@
+   putenv((char *)"SDL_VIDEO_CENTERED=yes");
+   
+   init_sdl(iSDL_Flags);
++
++#ifdef KBDMOUSE
++  SDL_EnableKeyRepeat(KBDMOUSE_REPEAT_DELAY, KBDMOUSE_REPEAT_INTERVAL);
++#endif
+   
+   freelog(LOG_NORMAL, _("Using Video Output: %s"),
+ 	  SDL_VideoDriverName(device, sizeof(device)));
+--- a/client/gui-sdl/widget_edit.c	2010-10-05 04:29:20.907598799 +0200
++++ b/client/gui-sdl/widget_edit.c	2010-10-05 04:41:51.888846695 +0200
+@@ -30,6 +30,10 @@
+ #include "widget.h"
+ #include "widget_p.h"
+ 
++#ifdef KBDMOUSE
++#include KBDMOUSE
++#endif
++
+ struct UniChar {
+   struct UniChar *next;
+   struct UniChar *prev;
+@@ -730,9 +734,13 @@
+   del_chain(pEdt.pBeginTextChain);
+   
+   FREESURFACE(pEdt.pBg);
+-    
++  
++#ifdef KBDMOUSE
++  SDL_EnableKeyRepeat(KBDMOUSE_REPEAT_DELAY, KBDMOUSE_REPEAT_INTERVAL);
++#else
+   /* disable repeate key */
+   SDL_EnableKeyRepeat(0, SDL_DEFAULT_REPEAT_INTERVAL);
++#endif
+ 
+   /* disable Unicode */
+   SDL_EnableUNICODE(0);

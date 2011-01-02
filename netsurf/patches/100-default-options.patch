@@ -1,0 +1,48 @@
+--- a/framebuffer/options.h	2010-10-10 19:41:15.917891618 +0200
++++ b/framebuffer/options.h	2010-10-10 19:43:03.217893158 +0200
+@@ -59,13 +59,13 @@
+ 
+ 
+ #define EXTRA_OPTION_DEFINE				\
+-	int option_fb_depth = 32;			\
++	int option_fb_depth = 24;			\
+ 	int option_fb_refresh = 70;			\
+ 	char *option_fb_device = 0;			\
+ 	char *option_fb_input_devpath = 0;		\
+ 	char *option_fb_input_glob = 0;			\
+-	int option_fb_furniture_size = 18;		\
+-	int option_fb_toolbar_size = 30;		\
++	int option_fb_furniture_size = 10;		\
++	int option_fb_toolbar_size = 15;		\
+ 	char *option_fb_toolbar_layout;			\
+ 	bool option_fb_osk = false;			\
+ 	bool option_fb_font_monochrome = false;		\
+--- a/framebuffer/gui.c	2010-10-10 19:34:23.097901020 +0200
++++ b/framebuffer/gui.c	2010-10-10 19:48:12.397888727 +0200
+@@ -59,7 +59,7 @@
+ #include "desktop/history_core.h"
+ #include "content/fetch.h"
+ 
+-#define NSFB_TOOLBAR_DEFAULT_LAYOUT "blfsrut"
++#define NSFB_TOOLBAR_DEFAULT_LAYOUT "bfsrut"
+ 
+ char *default_stylesheet_url;
+ char *quirks_stylesheet_url;
+@@ -389,14 +389,14 @@
+ 	LOG(("argc %d, argv %p", argc, argv));
+ 
+ 	fename = "sdl";
+-	febpp = 32;
++	febpp = 24;
+ 
+ 	if ((option_window_width != 0) && (option_window_height != 0)) {
+ 		fewidth = option_window_width;
+ 		feheight = option_window_height;
+ 	} else {
+-		fewidth = 800;
+-		feheight = 600;
++		fewidth = 320;
++		feheight = 240;
+ 	}
+ 
+ 	if (option_homepage_url != NULL && option_homepage_url[0] != '\0')

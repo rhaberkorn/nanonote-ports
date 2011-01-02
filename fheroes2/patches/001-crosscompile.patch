@@ -1,0 +1,20 @@
+--- a/src/Makefile	2010-10-02 21:43:52.099078234 +0200
++++ b/src/Makefile	2010-10-02 23:46:44.197838553 +0200
+@@ -6,8 +6,8 @@
+ SDL_LIBS := $(shell sdl-config --libs)
+ SDL_FLAGS := $(shell sdl-config --cflags)
+ 
+-CFLAGS := $(CFLAGS) -Wall -fsigned-char -DWITH_KEYMAPPING
+-LDFLAGS :=
++CFLAGS := $(CFLAGS) $(CPPFLAGS) -Wall -fsigned-char -DWITH_KEYMAPPING
++LDFLAGS := $(LDFLAGS)
+ LIBS :=
+ 
+ ifdef DEBUG
+--- a/src/Makefile.unix	2010-10-02 21:43:38.669081686 +0200
++++ b/src/Makefile.unix	2010-10-02 21:43:47.457845197 +0200
+@@ -1,2 +1,2 @@
+-AR := ar
+-CXX := g++
++AR ?= ar
++CXX ?= g++

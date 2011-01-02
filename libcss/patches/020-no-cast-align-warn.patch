@@ -1,0 +1,11 @@
+--- a/Makefile	2010-10-10 18:18:37.237899682 +0200
++++ b/Makefile	2010-10-10 18:18:46.477895474 +0200
+@@ -10,7 +10,7 @@
+ TESTRUNNER := $(PERL) build/testtools/testrunner.pl
+ 
+ # Toolchain flags
+-WARNFLAGS := -Wall -W -Wundef -Wpointer-arith -Wcast-align \
++WARNFLAGS := -Wall -W -Wundef -Wpointer-arith \
+ 	-Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes \
+ 	-Wmissing-declarations -Wnested-externs -pedantic
+ # BeOS/Haiku/AmigaOS4 standard library headers create warnings

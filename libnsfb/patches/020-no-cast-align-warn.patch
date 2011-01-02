@@ -1,0 +1,11 @@
+--- a/Makefile	2010-10-10 05:53:28.609713613 +0200
++++ b/Makefile	2010-10-10 05:53:42.499719955 +0200
+@@ -11,7 +11,7 @@
+ TESTRUNNER = test/runtest.sh $(BUILDDIR) $(EXEEXT)
+ 
+ # Toolchain flags
+-WARNFLAGS := -Wall -Wextra -Wundef -Wpointer-arith -Wcast-align \
++WARNFLAGS := -Wall -Wextra -Wundef -Wpointer-arith \
+ 	-Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes \
+ 	-Wmissing-declarations -Wnested-externs -Werror -pedantic \
+ 	-Wno-overlength-strings # For nsglobe.c

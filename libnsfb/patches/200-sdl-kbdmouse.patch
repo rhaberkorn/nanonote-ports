@@ -1,0 +1,163 @@
+--- a/src/surface/sdl.c	2010-04-29 01:26:13.521908000 +0200
++++ b/src/surface/sdl.c	2010-10-13 03:06:18.945784735 +0200
+@@ -6,6 +6,10 @@
+  *                http://www.opensource.org/licenses/mit-license.php
+  */
+ 
++#define _POSIX_SOURCE
++#include <sys/types.h>
++#include <unistd.h>
++#include <signal.h>
+ #include <stdbool.h>
+ #include <stdlib.h>
+ #include <SDL/SDL.h>
+@@ -20,6 +24,10 @@
+ #include "plot.h"
+ #include "cursor.h"
+ 
++#ifdef KBDMOUSE
++#include KBDMOUSE
++#endif
++
+ enum nsfb_key_code_e sdl_nsfb_map[] = {
+     NSFB_KEY_UNKNOWN,
+     NSFB_KEY_UNKNOWN,
+@@ -470,7 +478,11 @@
+     nsfb->linelen = sdl_screen->pitch;
+ 
+     SDL_ShowCursor(SDL_DISABLE);
++#ifdef KBDMOUSE
++    SDL_EnableKeyRepeat(KBDMOUSE_REPEAT_DELAY, KBDMOUSE_REPEAT_INTERVAL);
++#else
+     SDL_EnableKeyRepeat(300, 50);
++#endif
+ 
+     return 0;
+ }
+@@ -497,6 +509,116 @@
+     return 0;
+ }
+ 
++#ifdef KBDMOUSE
++
++static int keyboard_mouse(SDL_Event *event)
++{
++    static int enabled = 1;
++
++    SDL_Event new;
++    int x, y;
++
++    if ((int)event->key.keysym.sym == KBDMOUSE_TOGGLE) {
++    	if (event->type == SDL_KEYUP)
++    	    enabled = !enabled;
++        return 0;
++    }
++
++    if (!enabled)
++        return -1;
++
++    switch (event->type) {
++        case SDL_KEYDOWN:
++            switch ((int)event->key.keysym.sym) {
++                case KBDMOUSE_LEFT_CLICK:
++                case KBDMOUSE_RIGHT_CLICK:
++                    SDL_GetMouseState(&x, &y);
++
++                    new.type = SDL_MOUSEBUTTONDOWN;
++                    new.button.type = SDL_MOUSEBUTTONDOWN;
++                    new.button.which = 0;
++                    new.button.state = SDL_PRESSED;
++                    new.button.x = (Uint16)x;
++                    new.button.y = (Uint16)y;
++
++                    switch ((int)event->key.keysym.sym) {
++                        case KBDMOUSE_LEFT_CLICK:  new.button.button = SDL_BUTTON_LEFT; break;
++                        case KBDMOUSE_RIGHT_CLICK: new.button.button = SDL_BUTTON_RIGHT; break;
++                    }
++
++                    SDL_PushEvent(&new);
++                    return 0;
++
++                case KBDMOUSE_UP:
++                case KBDMOUSE_DOWN:
++                case KBDMOUSE_LEFT:
++                case KBDMOUSE_RIGHT:
++                    SDL_GetMouseState(&x, &y);
++
++                    switch ((int)event->key.keysym.sym) {
++                        case KBDMOUSE_UP:    y -= KBDMOUSE_STEP; break;
++                        case KBDMOUSE_DOWN:  y += KBDMOUSE_STEP; break;
++                        case KBDMOUSE_RIGHT: x += KBDMOUSE_STEP; break;
++                        case KBDMOUSE_LEFT:  x -= KBDMOUSE_STEP; break;
++                    }
++
++                    SDL_WarpMouse((Uint16)x, (Uint16)y);
++                    return 0;
++
++                case KBDMOUSE_QUIT_HACK:
++                    return 0;
++            }
++            break;
++
++        case SDL_KEYUP:
++            switch ((int)event->key.keysym.sym) {
++                case KBDMOUSE_LEFT_CLICK:
++                case KBDMOUSE_RIGHT_CLICK:
++                    SDL_GetMouseState(&x, &y);
++
++                    new.type = SDL_MOUSEBUTTONUP;
++                    new.button.type = SDL_MOUSEBUTTONUP;
++                    new.button.which = 0;
++                    new.button.state = SDL_RELEASED;
++                    new.button.x = (Uint16)x;
++                    new.button.y = (Uint16)y;
++
++                    switch ((int)event->key.keysym.sym) {
++                        case KBDMOUSE_LEFT_CLICK:  new.button.button = SDL_BUTTON_LEFT; break;
++                        case KBDMOUSE_RIGHT_CLICK: new.button.button = SDL_BUTTON_RIGHT; break;
++                    }
++
++                    SDL_PushEvent(&new);
++                    return 0;
++
++                case KBDMOUSE_UP:
++                case KBDMOUSE_DOWN:
++                case KBDMOUSE_LEFT:
++                case KBDMOUSE_RIGHT:
++                    return 0;
++
++                case KBDMOUSE_QUIT_HACK:
++                    kill(getpid(), SIGTERM);
++                    return 0;
++            }
++            break;
++
++        default:
++            break;
++    }
++
++    return -1;
++}
++
++#else
++
++static int keyboard_mouse(SDL_Event *event __attribute__((unused)))
++{
++    return -1;
++}
++
++#endif
++
+ static bool sdl_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
+ {
+     int got_event;
+@@ -526,6 +648,9 @@
+     if (got_event == 0)
+         return false;
+ 
++    if (!keyboard_mouse(&sdlevent))
++        return false;
++
+     event->type = NSFB_EVENT_NONE;
+ 
+     switch (sdlevent.type) {

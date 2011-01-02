@@ -1,0 +1,18 @@
+--- a/src/surface/Makefile	2010-10-10 06:21:54.469717609 +0200
++++ b/src/surface/Makefile	2010-10-10 06:22:20.259716132 +0200
+@@ -1,4 +1,4 @@
+ # Sources
+-DIR_SOURCES := surface.c sdl.c vnc.c able.c ram.c linux.c x.c
++DIR_SOURCES := surface.c sdl.c ram.c linux.c
+ 
+ include build/makefiles/Makefile.subdir
+--- a/libnsfb.pc.in	2010-10-10 19:08:10.649146014 +0200
++++ b/libnsfb.pc.in	2010-10-10 19:08:22.077902040 +0200
+@@ -6,6 +6,6 @@
+ Name: libnsfb
+ Description: Provides framebuffer access for netsurf.
+ Version: VERSION
+-Requires: sdl xcb xcb-icccm xcb-image xcb-keysyms
++Requires: sdl
+ Libs: -L${libdir} -lnsfb
+ Cflags: -I${includedir}
