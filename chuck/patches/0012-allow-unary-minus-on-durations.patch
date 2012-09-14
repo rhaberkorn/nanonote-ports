@@ -1,0 +1,43 @@
+From ab1269fde46f8a0c32e4ce5ba45de9e38442f6e3 Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Wed, 12 Sep 2012 22:58:07 +0200
+Subject: [PATCH 12/12] allow unary minus on durations
+
+there is no reason why "-1*samp" should works but not "-samp"
+---
+ chuck_emit.cpp |    3 ++-
+ chuck_type.cpp |    4 ++--
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/chuck_emit.cpp b/src/chuck_emit.cpp
+index 60cacc5..fdc7d9b 100644
+--- a/src/chuck_emit.cpp
++++ b/src/chuck_emit.cpp
+@@ -2590,7 +2590,8 @@ t_CKBOOL emit_engine_emit_exp_unary( Chuck_Emitter * emit, a_Exp_Unary unary )
+         // negate
+         if( equals( unary->exp->type, &t_int ) )
+             emit->append( new Chuck_Instr_Negate_int );
+-        else if( equals( unary->exp->type, &t_float ) )
++        else if( equals( unary->exp->type, &t_float ) ||
++                 equals( unary->exp->type, &t_dur ) )
+             emit->append( new Chuck_Instr_Negate_double );
+         else
+         {
+diff --git a/src/chuck_type.cpp b/src/chuck_type.cpp
+index 4f817b8..3b642d1 100644
+--- a/src/chuck_type.cpp
++++ b/src/chuck_type.cpp
+@@ -2041,8 +2041,8 @@ t_CKTYPE type_engine_check_exp_unary( Chuck_Env * env, a_Exp_Unary unary )
+         break;
+         
+         case ae_op_minus:
+-            // float
+-            if( isa( t, &t_float ) ) return t;
++            // duration, float
++            if( isa( t, &t_dur ) || isa( t, &t_float ) ) return t;
+         case ae_op_tilda:
+         case ae_op_exclamation:
+             // int
+-- 
+1.7.1
+

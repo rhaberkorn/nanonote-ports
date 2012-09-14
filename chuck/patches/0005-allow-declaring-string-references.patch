@@ -1,0 +1,27 @@
+From 9a84ba63d847024bb045d7a6c5362b63310071a8 Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Fri, 7 Sep 2012 17:20:15 +0200
+Subject: [PATCH 05/12] allow declaring "string" references
+
+tested, didn't experience any issues
+---
+ chuck_scan.cpp |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/src/chuck_scan.cpp b/src/chuck_scan.cpp
+index 916b579..b85b373 100644
+--- a/src/chuck_scan.cpp
++++ b/src/chuck_scan.cpp
+@@ -2173,7 +2173,8 @@ t_CKBOOL type_engine_scan2_exp_decl( Chuck_Env * env, a_Exp_Decl decl )
+     }
+ 
+     // primitive
+-    if( (isprim( type ) || isa( type, &t_string )) && decl->type->ref )  // TODO: string
++    if( (isprim( type ) /*|| isa( type, &t_string )*/)
++        && decl->type->ref )  // TODO: string
+     {
+         EM_error2( decl->linepos,
+             "cannot declare references (@) of primitive type '%s'...",
+-- 
+1.7.1
+

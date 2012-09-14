@@ -1,0 +1,25 @@
+From 2bec62a6c1053fd2007540b1028e991b1e539424 Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Sat, 8 Sep 2012 04:00:06 +0200
+Subject: [PATCH 11/12] use mono LiSa (only for my setup, no need to submit patch)
+
+---
+ ugen_xxx.cpp |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/ugen_xxx.cpp b/src/ugen_xxx.cpp
+index 17e39d6..f57bd9d 100644
+--- a/src/ugen_xxx.cpp
++++ b/src/ugen_xxx.cpp
+@@ -858,7 +858,7 @@ error:
+ }
+ 
+ 
+-#define LiSa_channels 8 //max channels for multichannel LiSa
++#define LiSa_channels 1 //max channels for multichannel LiSa
+ 
+ // LiSa (live sampling data offset)
+ static t_CKUINT LiSaMulti_offset_data = 0;
+-- 
+1.7.1
+

@@ -1,0 +1,25 @@
+From 58a8dbd6ce4e548407c92be1dd392e7f437e3862 Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Fri, 7 Sep 2012 17:17:56 +0200
+Subject: [PATCH 04/12] install chuck headers (for building Chugins)
+
+---
+ makefile |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/src/makefile b/src/makefile
+index aa87fe9..077b879 100644
+--- a/src/makefile
++++ b/src/makefile
+@@ -9,6 +9,8 @@ current:
+ install:
+ 	cp $(wildcard chuck chuck.exe) $(DESTDIR)/
+ 	chmod 755 $(DESTDIR)/$(wildcard chuck chuck.exe)
++	mkdir -p /usr/include/chuck
++	cp *.h /usr/include/chuck
+ 
+ ifneq ($(CK_TARGET),)
+ .DEFAULT_GOAL:=$(CK_TARGET)
+-- 
+1.7.1
+

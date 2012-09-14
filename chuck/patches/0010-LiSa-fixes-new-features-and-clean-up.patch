@@ -1,0 +1,1073 @@
+From d77b79446964fca0149bbaadc0e8354d92d6fafa Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Thu, 13 Sep 2012 01:47:37 +0200
+Subject: [PATCH 10/12] LiSa fixes, new features and clean up
+
+ * always check whether buffer is allocated (size set) if necessary fixing easy to provoke segfaults
+ * when configuring check values for validity (e.g. lisa.track())
+ * for every configuration parameter accepting a duration: support negative durations (translate to "from the end of the buffer") and durations longer than the buffer (translate to "from the beginning of the buffer")
+  * might be arbitrarily large
+ * tracking mode 1/2: accept input data < 0, or longer than buffer
+ * tracking mode 1: fixed playing whithout loop-playing (and arbitrarily set loop points)
+ * tracking mode 2: use all voices
+ * support loop start > loop end: loop over end of buffer/beginning of buffer
+etc.
+---
+ ugen_xxx.cpp |  668 ++++++++++++++++++++++++++++++++++------------------------
+ 1 files changed, 391 insertions(+), 277 deletions(-)
+
+diff --git a/src/ugen_xxx.cpp b/src/ugen_xxx.cpp
+index dfb1bca..17e39d6 100644
+--- a/src/ugen_xxx.cpp
++++ b/src/ugen_xxx.cpp
+@@ -51,6 +51,7 @@
+ #include "chuck_vm.h"
+ #include "chuck_globals.h"
+ #include "chuck_instr.h"
++#include "chuck_errmsg.h"
+ 
+ #include <fstream>
+ using namespace std;
+@@ -3556,6 +3557,7 @@ struct LiSaMulti_data
+     t_CKINT mdata_len;
+     t_CKINT maxvoices;
+     t_CKINT loop_start[LiSa_MAXVOICES], loop_end[LiSa_MAXVOICES], loop_end_rec;
++    t_CKINT loop_len[LiSa_MAXVOICES]; // caching of frequently used values
+     t_CKINT rindex; // record and play indices
+     t_CKBOOL record, looprec, loopplay[LiSa_MAXVOICES], reset, append, play[LiSa_MAXVOICES], bi[LiSa_MAXVOICES];
+     t_CKFLOAT coeff; // feedback coeff
+@@ -3577,51 +3579,118 @@ struct LiSaMulti_data
+         SAFE_DELETE( mdata );
+     }
+ 
++    inline t_CKDOUBLE normalize_index(t_CKDOUBLE index)
++    {
++        while( index < 0 ) index += mdata_len;
++        while( index >= mdata_len ) index -= mdata_len;
++
++        return index;
++    }
++
++    inline t_CKINT get_safe_voice(t_CKINT voice)
++    {
++        if (voice < 0 || voice >= maxvoices)
++        {
++            EM_error2( 0, "LiSa: Requesting invalid voice number %d (MAXVOICES=%d)",
++                          voice, LiSa_MAXVOICES);
++            return 0;
++        }
++
++        return voice;
++    }
++
++    void update_cache(t_CKINT which = 0)
++    {
++        if( loop_start[which] <= loop_end[which] )
++            loop_len[which] = loop_end[which] - loop_start[which];
++        else /* loop_start[which] > loop_end[which] */
++            loop_len[which] = mdata_len - loop_start[which] + loop_end[which];
++
++        loop_len[which]++;
++    }
++
++    inline t_CKDUR set_loop_start(t_CKDUR v, t_CKINT which = 0)
++    {
++        if( !mdata )
++        {
++            EM_error2( 0, "LiSa: Trying to set loop start on uninitialized buffer; ignoring" );
++            return 0.;
++        }
++
++        loop_start[which] = (t_CKINT)normalize_index( (t_CKDOUBLE)v );
++        update_cache( which );
++
++        return (t_CKDUR)loop_start[which];
++    }
++    inline t_CKDUR set_loop_end(t_CKDUR v, t_CKINT which = 0)
++    {
++        if( !mdata )
++        {
++            EM_error2( 0, "LiSa: Trying to set loop end on uninitialized buffer; ignoring" );
++            return 0.;
++        }
++
++        loop_end[which] = (t_CKINT)normalize_index( (t_CKDOUBLE)v );
++        update_cache( which );
++
++        return (t_CKDUR)loop_end[which];
++    }
++
+     // allocate memory, length in samples
+-    inline int buffer_alloc(t_CKINT length)
++    inline t_CKDUR buffer_alloc(t_CKDUR length)
+     {
++        if( (t_CKINT)length > LiSa_MAXBUFSIZE )
++        {
++            EM_error2( 0, "LiSa: Buffer size request too large, resizing to %d",
++                          LiSa_MAXBUFSIZE );
++            length = LiSa_MAXBUFSIZE;
++        }
++
+         SAFE_DELETE( mdata );
++        mdata_len = 0;
+ 
+-        mdata = new SAMPLE[length + 1]; //extra sample for safety....
+-        if(!mdata)  {
+-            fprintf(stderr, "LiSaBasic: unable to allocate memory!\n");
+-            return false;
++        mdata = new SAMPLE[(t_CKINT)length];
++        if( !mdata )
++        {
++            EM_error2( 0, "LiSa: Unable to allocate memory!");
++            return 0.;
+         }
++
++        mdata_len = (t_CKINT)length;
+         clear_buf();
+ 
+-        mdata_len = length;
+         maxvoices = 10; // default; user can set
+         rec_ramplen = 0.;
+         rec_ramplen_inv = 1.;
+-        
++
+         track = 0;
+-        
+-        for (t_CKINT i=0; i < LiSa_MAXVOICES; i++) {
++
++        for( t_CKINT i = 0; i < LiSa_MAXVOICES; i++ )
++        {
+             loop_start[i] = 0;
+-            //loop_end[i] = length - 1; //no idea why i had this
+-			loop_end[i] = length;
+-			loop_end_rec = length;
+-            
++            loop_end[i] = mdata_len - 1;
++            loop_end_rec = mdata_len - 1;
++
+             pindex[i] = rindex = 0;
+             play[i] = record = bi[i] = false;
+             looprec = loopplay[i] = true;
+             coeff = 0.;
+             p_inc[i] = 1.;
+-			voiceGain[i] = 1.;
+-			voicePan[i] = 0.5;
+-            
++            voiceGain[i] = 1.;
++            voicePan[i] = 0.5;
++
+             // ramp stuff
+             rampup[i] = rampdown[i] = false;
+             rampup_len[i] = rampdown_len[i] = 0.;
+             rampup_len_inv[i] = rampdown_len_inv[i] = 1.;
+             rampctr[i] = 0.;
+-			
+-			for(t_CKINT j=0; j<LiSa_channels; j++) {
+-				channelGain[i][j] = 1.;
+-			}
++
++            for( t_CKINT j = 0; j < LiSa_channels; j++ ) channelGain[i][j] = 1.;
++
++            update_cache( i );
+         }
+-        
+-        return true;
++
++        return (t_CKDUR)mdata_len;
+     }
+     
+     // dump a sample into the buffer; retain existing sample, scaled by "coeff"
+@@ -3658,98 +3727,126 @@ struct LiSaMulti_data
+             rindex++;
+         }
+     }
+-    
++
++    inline bool isInLoop(t_CKDOUBLE where, t_CKINT which = 0)
++    {
++        if( loop_start[which] <= loop_end[which] )
++            return where >= loop_start[which] && where <= loop_end[which];
++        else
++            return where >= loop_start[which] || where <= loop_end[which];
++    }
++
+     // grab a sample from the buffer, with linear interpolation (add prc's SINC interp later)
+     // increment play index
+-	// which specifies voice number
+-    inline SAMPLE getNextSamp(t_CKINT which)
++    // which specifies voice number
++    inline SAMPLE getNextSamp(t_CKINT which = 0)
+     {
+         // constrain
+-        if(loopplay[which]) {
+-            if(bi[which]) { // change direction if bidirectional mode
+-                if(pindex[which] >= loop_end[which] || pindex[which] < loop_start[which]) { //should be >= ?
+-                    pindex[which]  -=  p_inc[which];
+-                    p_inc[which]    = -p_inc[which];
+-                } 
++        if( loopplay[which] )
++        {
++            bool wasOutsideLoop = false;
++
++            if ( loop_start[which] == loop_end[which] )
++            {
++                pindex[which] = loop_start[which];
++            }
++            else if ( loop_start[which] < loop_end[which] )
++            {
++                wasOutsideLoop = pindex[which] < loop_start[which] ||
++                                 pindex[which] > loop_end[which];
++
++                while( pindex[which] > loop_end[which] )
++                    pindex[which] -= loop_len[which];
++                while( pindex[which] < loop_start[which] )
++                    pindex[which] += loop_len[which];
+             }
+-			if( loop_start[which] == loop_end[which] ) pindex[which] = loop_start[which]; //catch this condition to avoid infinite while loops
+-			else {
+-				while(pindex[which] >= loop_end[which]) pindex[which] = loop_start[which] + (pindex[which] - loop_end[which]); //again, >=?
+-				while(pindex[which] < loop_start[which]) pindex[which] = loop_end[which] - (loop_start[which] - pindex[which]);
+-			}
+-
+-        } else if(pindex[which] >= mdata_len || pindex[which] < 0) { //should be >=, no?
+-            play[which] = 0;
++            else /* loop_start[which] > loop_end[which] */
++            {
++                pindex[which] = normalize_index( pindex[which] );
++
++                wasOutsideLoop = pindex[which] < loop_start[which] &&
++                                 pindex[which] > loop_end[which];
++
++                if( wasOutsideLoop )
++                {
++                    if( p_inc[which] > 0 )
++                    {
++                        /* after loop end */
++                        while( pindex[which] > 0 )
++                            pindex[which] -= loop_len[which];
++                        pindex[which] += mdata_len;
++                    }
++                    else
++                    {
++                        /* before loop start */
++                        while( pindex[which] < mdata_len )
++                            pindex[which] += loop_len[which];
++                        pindex[which] -= mdata_len;
++                    }
++                }
++            }
++
++            // change direction if bidirectional mode
++            if( bi[which] && wasOutsideLoop ) p_inc[which] *= -1;
++        }
++        /* !loopplay[which] */
++        else if( pindex[which] >= mdata_len || pindex[which] < 0 )
++        {
++            play[which] = false;
+             //fprintf(stderr, "turning voice %d off!\n", which);
+-            return (SAMPLE) 0.;
++            return SILENCE;
+         }
+-        
++
+         // interp
+-        t_CKINT whereTrunc = (t_CKINT) pindex[which];
++        t_CKINT whereTrunc = (t_CKINT)pindex[which];
+         t_CKDOUBLE whereFrac = pindex[which] - (t_CKDOUBLE)whereTrunc;
+         t_CKINT whereNext = whereTrunc + 1;
+-        
+-        if (loopplay[which]) {
+-			if((whereNext) >= loop_end[which]) {
+-				whereNext = loop_start[which];
+-			}
+-			if((whereTrunc) >= loop_end[which]) {
+-				whereTrunc = loop_start[which];
+-			}
+-		} else {
+-			if((whereTrunc) >= mdata_len) {
+-				whereTrunc = mdata_len - 1; //should correct this, in case we've overshot by more than 1 sample
+-				whereNext = 0;
+-			}
+-			if((whereNext) >= mdata_len) {
+-				whereNext = 0;
+-			}
+-		}
+-        
++
++        if( whereNext == mdata_len ) whereNext = 0;
++
++        if( loopplay[which] && !isInLoop( whereNext, which ) )
++            whereNext = loop_start[which];
++
+         pindex[which] += p_inc[which];
+-        
++
+         t_CKDOUBLE outsample;
+-        outsample = (t_CKDOUBLE)mdata[whereTrunc] + (t_CKDOUBLE)(mdata[whereNext] - mdata[whereTrunc]) * whereFrac;
+-        
++        outsample = (t_CKDOUBLE)mdata[whereTrunc] +
++                    (t_CKDOUBLE)(mdata[whereNext] - mdata[whereTrunc]) * whereFrac;
++
+         // ramp stuff
+-        if(rampup[which]) {
++        if( rampup[which] )
++        {
+             outsample *= rampctr[which]++ * rampup_len_inv[which]; //remove divide
+-            if(rampctr[which] >= rampup_len[which]) rampup[which] = false;
++            rampup[which] = rampctr[which] < rampup_len[which];
+         }
+-        else if(rampdown[which]) {
++        else if( rampdown[which] )
++        {
+             outsample *= (rampdown_len[which] - rampctr[which]++) * rampdown_len_inv[which];
+-            if(rampctr[which] >= rampdown_len[which]) {
+-                rampdown[which] = false;
+-                play[which] = false; 
+-            }
++            play[which] = rampdown[which] = rampctr[which] < rampdown_len[which];
+         }
+-		
+-		outsample *= voiceGain[which];
+-        
+-        return (SAMPLE)outsample;        
++
++        return (SAMPLE)(outsample * voiceGain[which]);
+     }
+     
+     // grab a sample from the buffer, with linear interpolation (add prc's SINC interp later)
+     // given a position within the buffer
+-    inline SAMPLE getSamp(t_CKDOUBLE where, t_CKINT which)
++    inline SAMPLE getSamp(t_CKDOUBLE where, t_CKINT which = 0)
+     {
+-        // constrain
+-        if(where > loop_end[which])   where = loop_end[which];
+-        if(where < loop_start[which]) where = loop_start[which];
+-        
+         // interp
+-        t_CKINT whereTrunc = (t_CKINT) where;
++        t_CKINT whereTrunc = (t_CKINT)where;
+         t_CKDOUBLE whereFrac = where - (t_CKDOUBLE)whereTrunc;
+         t_CKINT whereNext = whereTrunc + 1;
+-        
+-        if((whereNext) == loop_end[which]) whereNext = loop_start[which];
++
++        if( whereNext == mdata_len ) whereNext = 0;
++
++        if( loopplay[which] && !isInLoop( whereNext, which ) )
++            whereNext = loop_start[which];
+ 
+         t_CKDOUBLE outsample;
+-        outsample = (t_CKDOUBLE)mdata[whereTrunc] + (t_CKDOUBLE)(mdata[whereNext] - mdata[whereTrunc]) * whereFrac;
+-		outsample *= voiceGain[which];
+-        
+-		//add voiceGain ctl here; return (SAMPLE)vgain[which]*outsample;
+-        return (SAMPLE)outsample;        
++        outsample = (t_CKDOUBLE)mdata[whereTrunc] +
++                    (t_CKDOUBLE)(mdata[whereNext] - mdata[whereTrunc]) * whereFrac;
++
++        return (SAMPLE)(outsample * voiceGain[which]);
+     }
+ 
+     // ramp stuff
+@@ -3792,6 +3889,11 @@ struct LiSaMulti_data
+ 		//fprintf ( stderr, "rec_ramplen = %f, inv = %f \n", rec_ramplen, rec_ramplen_inv );
+     }
+ 
++    inline void mix_voice(SAMPLE sample, t_CKINT which, SAMPLE *out)
++    {
++        for( t_CKINT i = 0; i < LiSa_channels; i++ )
++            out[i] += sample * channelGain[which][i];
++    }
+ 
+ 	//for simple stereo panning of a particular voice, and...
+ 	//	l.channelGain(voice, channel, gain)
+@@ -3805,44 +3907,39 @@ struct LiSaMulti_data
+         case 0:
+             recordSamp( in );
+             for( t_CKINT i = 0; i < maxvoices; i++ )
+-            {
+-                if( play[i] )
+-                {
+-                    SAMPLE tempsample = getNextSamp( i );
+-                    for( t_CKINT j = 0; j < LiSa_channels; j++ )
+-                        out[j] += tempsample * channelGain[i][j]; //channelGain should return gain for voice i in channel j
+-                }
+-            }
++                if( play[i] ) mix_voice( getNextSamp( i ), i, out );
+             break;
+ 
+         case 1:
+-            if( in < 0. ) in = -in;
++        case 2:
+             for( t_CKINT i = 0; i < maxvoices; i++ )
+             {
+                 if( play[i] )
+                 {
+-                    SAMPLE tempsample = getSamp( (t_CKDOUBLE)in * (loop_end[i] - loop_start[i]) + loop_start[i], i );
+-                    for( t_CKINT j = 0; j < LiSa_channels; j++ )
+-                        out[j] += tempsample * channelGain[i][j];
++                    t_CKDOUBLE where;
++
++                    if( track == 2 )
++                        where = (t_CKDOUBLE)in;
++                    else if( loopplay[i] )
++                        where = (t_CKDOUBLE)in*loop_len[i] + loop_start[i];
++                    else
++                        where = (t_CKDOUBLE)in*mdata_len;
++
++                    mix_voice( getSamp( normalize_index( where ), i ), i, out );
+                 }
+             }
+             break;
+ 
+-        case 2:
+-            if( in < 0. ) in = -in; //only use voice 0 when tracking with durs.
+-            if( play[0] )
+-            {
+-                SAMPLE tempsample = getSamp( (t_CKDOUBLE)in, 0 );
+-                for( t_CKINT j = 0; j < LiSa_channels; j++ )
+-                    out[j] = tempsample * channelGain[0][j];
+-            }
++        default:
++            /* shouldn't happen */
+             break;
+         }
+     }
+     
+     inline void clear_buf()
+     {
+-        memset( mdata, 0, mdata_len*sizeof(SAMPLE) );
++        if( mdata )
++            memset( mdata, 0, mdata_len*sizeof(SAMPLE) );
+     }
+     
+     inline t_CKINT get_free_voice()
+@@ -3856,40 +3953,59 @@ struct LiSaMulti_data
+     }
+ 	
+ 	//stick sample in record buffer
+-	inline void pokeSample( SAMPLE insample, t_CKINT index ) {
+-	
+-		if ( index >= mdata_len || index < 0 ) {
+-			index = 0;
+-			fprintf(stderr, "LiSa: trying to put sample out of buffer range; ignoring");
+-		} else mdata[index] = insample;
+-	
+-	}
++    inline void pokeSample( SAMPLE insample, t_CKINT index )
++    {
++        mdata[index] = insample;
++    }
+ 	
+ 	//grab sample directly from record buffer, with linear interpolation
+-	inline SAMPLE grabSample ( t_CKDOUBLE where ) {
+-	
+-		if ( where > mdata_len || where < 0 ) {
+-			where = 0;
+-			fprintf(stderr, "LiSa: trying to grab sample out of buffer range; ignoring");
+-			return 0.;
+-		} else {
+-		        
+-			// interp
+-			t_CKINT whereTrunc = (t_CKINT) where;
+-			t_CKDOUBLE whereFrac = where - (t_CKDOUBLE)whereTrunc;
+-			t_CKINT whereNext = whereTrunc + 1;
+-			
+-			if((whereNext) == mdata_len) whereNext = 0;
++    inline SAMPLE grabSample( t_CKDOUBLE where )
++    {
++        // interp
++        t_CKINT whereTrunc = (t_CKINT) where;
++        t_CKDOUBLE whereFrac = where - (t_CKDOUBLE)whereTrunc;
++        t_CKINT whereNext = whereTrunc + 1;
+ 
+-			t_CKDOUBLE outsample;
+-			outsample = (t_CKDOUBLE)mdata[whereTrunc] + (t_CKDOUBLE)(mdata[whereNext] - mdata[whereTrunc]) * whereFrac;
+-			
+-			//add voiceGain ctl here; return (SAMPLE)vgain[which]*outsample;
+-			return (SAMPLE)outsample;   
+-		
+-		  }  
+-	}
+-	
++        if( whereNext == mdata_len ) whereNext = 0;
++
++        t_CKDOUBLE outsample;
++        outsample = (t_CKDOUBLE)mdata[whereTrunc] + (t_CKDOUBLE)(mdata[whereNext] - mdata[whereTrunc]) * whereFrac;
++
++        return (SAMPLE)outsample;
++    }
++
++    t_CKFLOAT set_voice_pan(t_CKFLOAT pan, t_CKINT which = 0)
++    {
++        voicePan[which] = pan;
++
++        for( t_CKINT i = 0; i < LiSa_channels; i++ ) channelGain[which][i] = 0.;
++
++        for( t_CKINT i = 0; i < LiSa_channels; i++ )
++        {
++            t_CKINT panTrunc = (t_CKINT)voicePan[which];
++            //fprintf(stderr, "panTrunc = %d, panFloat = %f, i = %d\n", panTrunc, voicePan[which], i);
++            if( i == panTrunc )
++            {
++                channelGain[which][i] = 1. - ( voicePan[which] - (t_CKFLOAT)i );
++                if( i == LiSa_channels - 1 )
++                {
++                    channelGain[which][0] = 1. - channelGain[which][i];
++                    channelGain[which][0] = sqrt( channelGain[which][0] );
++                }
++                else
++                {
++                    channelGain[which][i+1] = 1. - channelGain[which][i];
++                    channelGain[which][i+1] = sqrt( channelGain[which][i+1] );
++                }
++
++                channelGain[which][i] = sqrt( channelGain[which][i] );
++            }
++
++            //fprintf(stderr, "gain for channel %d and voice %d = %f\n", i, which, channelGain[which][i]);
++        }
++
++        return pan;
++    }
+ };
+ 
+ 
+@@ -3967,14 +4083,8 @@ CK_DLL_TICKF( LiSaMulti_tickf )
+ CK_DLL_CTRL( LiSaMulti_size )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKDUR buflen = GET_NEXT_DUR(ARGS);
+-    if (buflen > LiSa_MAXBUFSIZE) {
+-        fprintf(stderr, "LiSa: buffer size request too large, resizing\n");
+-        buflen = LiSa_MAXBUFSIZE;
+-    }
+-    d->buffer_alloc((t_CKINT)buflen);
+-    
+-    RETURN->v_dur = (t_CKDUR)buflen;
++
++    RETURN->v_dur = d->buffer_alloc( GET_NEXT_DUR(ARGS) );
+ }
+ 
+ CK_DLL_CGET( LiSaMulti_cget_size )
+@@ -4005,7 +4115,7 @@ CK_DLL_CTRL( LiSaMulti_start_record )
+ CK_DLL_CTRL( LiSaMulti_start_play )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+     d->play[which] = GET_NEXT_INT(ARGS);
+     //fprintf(stderr, "voice %d playing = %d\n", which, d->play[which]);
+ 	
+@@ -4044,7 +4154,7 @@ CK_DLL_CTRL( LiSaMulti_start_play0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_rate )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+     d->p_inc[which] = (t_CKDOUBLE)GET_NEXT_FLOAT(ARGS); 
+ 														
+     //fprintf(stderr, "setting voice %d rate to %f\n", which, d->p_inc[which]);
+@@ -4071,7 +4181,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_rate0 )
+ CK_DLL_CTRL( LiSaMulti_cget_rate )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+     //fprintf(stderr, "setting voice %d rate to %f\n", which, d->p_inc[which]);
+     
+     RETURN->v_float = d->p_inc[which];
+@@ -4093,8 +4203,8 @@ CK_DLL_CTRL( LiSaMulti_cget_rate0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_pindex )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
+-    d->pindex[which] = (t_CKDOUBLE)GET_NEXT_DUR(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++    d->pindex[which] = d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+     
+     RETURN->v_dur = (t_CKDUR)d->pindex[which];
+ }
+@@ -4103,7 +4213,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_pindex )
+ CK_DLL_CTRL( LiSaMulti_ctrl_pindex0 )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    d->pindex[0] = (t_CKDOUBLE)GET_NEXT_DUR(ARGS);
++    d->pindex[0] = d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+     
+     RETURN->v_dur = (t_CKDUR)d->pindex[0];
+ }
+@@ -4116,7 +4226,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_pindex0 )
+ CK_DLL_CGET( LiSaMulti_cget_pindex )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+ 
+     // return
+     RETURN->v_dur = (t_CKDUR)d->pindex[which];
+@@ -4139,7 +4249,7 @@ CK_DLL_CGET( LiSaMulti_cget_pindex0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_rindex )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    d->rindex = /* gewang-> */(t_CKINT)GET_NEXT_DUR(ARGS);
++    d->rindex = (t_CKINT)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+     
+     RETURN->v_dur = (t_CKDUR)d->rindex;
+ }
+@@ -4165,23 +4275,17 @@ CK_DLL_CGET( LiSaMulti_cget_rindex )
+ CK_DLL_CTRL( LiSaMulti_ctrl_lstart )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
+-    d->loop_start[which] = /* gewang-> */(t_CKINT)GET_NEXT_DUR(ARGS);
+-    
+-	if (d->loop_start[which] < 0) d->loop_start[which] = 0;
+-	
+-    RETURN->v_dur = (t_CKDUR)d->loop_start[which];
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++
++    RETURN->v_dur = d->set_loop_start( GET_NEXT_DUR(ARGS), which );
+ }
+ 
+ 
+ CK_DLL_CTRL( LiSaMulti_ctrl_lstart0 )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    d->loop_start[0] = /* gewang-> */(t_CKINT)GET_NEXT_DUR(ARGS);
+-    
+-	if (d->loop_start[0] < 0) d->loop_start[0] = 0;
+-	
+-    RETURN->v_dur = (t_CKDUR)d->loop_start[0];
++
++    RETURN->v_dur = d->set_loop_start( GET_NEXT_DUR(ARGS) );
+ }
+ 
+ 
+@@ -4193,7 +4297,7 @@ CK_DLL_CGET( LiSaMulti_cget_lstart )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+     
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+     // return
+     RETURN->v_dur = (t_CKDUR)d->loop_start[which];
+ }
+@@ -4215,25 +4319,17 @@ CK_DLL_CGET( LiSaMulti_cget_lstart0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_lend )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
+-    d->loop_end[which] = /* gewang-> */(t_CKINT)GET_NEXT_DUR(ARGS);
+-	
+-	//check to make sure loop_end is not too large
+-	if (d->loop_end[which] >= d->mdata_len) d->loop_end[which] = d->mdata_len - 1;
+-	
+-	RETURN->v_dur = (t_CKDUR)d->loop_end[which];
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++
++	RETURN->v_dur = d->set_loop_end( GET_NEXT_DUR(ARGS), which );
+ }
+ 
+ 
+ CK_DLL_CTRL( LiSaMulti_ctrl_lend0 )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    d->loop_end[0] = /* gewang-> */(t_CKINT)GET_NEXT_DUR(ARGS);
+-	
+-	//check to make sure loop_end is not too large
+-	if (d->loop_end[0] >= d->mdata_len) d->loop_end[0] = d->mdata_len - 1;
+-    
+-    RETURN->v_dur = (t_CKDUR)d->loop_end[0];
++
++    RETURN->v_dur = d->set_loop_end( GET_NEXT_DUR(ARGS) );
+ }
+ 
+ 
+@@ -4244,7 +4340,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_lend0 )
+ CK_DLL_CGET( LiSaMulti_cget_lend )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+ 
+     // return
+     RETURN->v_dur = (t_CKDUR)d->loop_end[which];
+@@ -4267,7 +4363,7 @@ CK_DLL_CGET( LiSaMulti_cget_lend0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_loop )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+     d->loopplay[which] = (t_CKBOOL)GET_NEXT_INT(ARGS);
+ }
+ 
+@@ -4288,7 +4384,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_loop0 )
+ CK_DLL_CGET( LiSaMulti_cget_loop )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+ 
+     // return
+     RETURN->v_int = (t_CKINT)d->loopplay[which];
+@@ -4311,7 +4407,7 @@ CK_DLL_CGET( LiSaMulti_cget_loop0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_bi )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+     d->bi[which] = (t_CKBOOL)GET_NEXT_INT(ARGS);
+     
+     RETURN->v_int = (t_CKINT)d->bi[which];
+@@ -4334,7 +4430,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_bi0 )
+ CK_DLL_CGET( LiSaMulti_cget_bi )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT which = GET_NEXT_INT(ARGS);
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+ 
+     // return
+     RETURN->v_int = (t_CKINT)d->bi[which];
+@@ -4357,8 +4453,15 @@ CK_DLL_CGET( LiSaMulti_cget_bi0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_loop_end_rec )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    d->loop_end_rec = /* gewang-> */(t_CKINT)GET_NEXT_DUR(ARGS);
+-    
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to set loop recording end on uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
++
++    d->loop_end_rec = (t_CKINT)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
++
+     RETURN->v_dur = (t_CKDUR)d->loop_end_rec;
+ }
+ 
+@@ -4408,11 +4511,18 @@ CK_DLL_CGET( LiSaMulti_cget_loop_rec )
+ CK_DLL_CTRL( LiSaMulti_ctrl_sample )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	SAMPLE sample_in = (SAMPLE)GET_NEXT_FLOAT(ARGS);
+-    int index_in = (t_CKINT)GET_NEXT_DUR(ARGS);
+-	
+-	d->pokeSample( sample_in, index_in );
+-    
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to put sample into uninitialized buffer; ignoring" );
++        RETURN->v_float = 0.;
++        return;
++    }
++
++    SAMPLE sample_in = (SAMPLE)GET_NEXT_FLOAT(ARGS);
++    t_CKINT index_in = (t_CKINT)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
++
++    d->pokeSample( sample_in, index_in );
++
+     RETURN->v_float = (t_CKFLOAT)sample_in; //pass input through
+ }
+ 
+@@ -4423,7 +4533,14 @@ CK_DLL_CTRL( LiSaMulti_ctrl_sample )
+ CK_DLL_CGET( LiSaMulti_cget_sample )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	double index_in = (t_CKDOUBLE)GET_NEXT_DUR(ARGS);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to grab sample from uninitialized buffer; ignoring" );
++        RETURN->v_float = 0.;
++        return;
++    }
++
++	t_CKDOUBLE index_in = d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+     // return
+     RETURN->v_float = (t_CKFLOAT)d->grabSample( index_in ); //change this to getSamp for interpolation
+ }
+@@ -4436,7 +4553,7 @@ CK_DLL_CGET( LiSaMulti_cget_sample )
+ CK_DLL_CTRL( LiSaMulti_ctrl_voicegain )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	t_CKINT which = GET_NEXT_INT(ARGS);
++	t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+     d->voiceGain[which] = (t_CKDOUBLE)GET_NEXT_FLOAT(ARGS);
+     
+     RETURN->v_float = (t_CKFLOAT)d->voiceGain[which];
+@@ -4450,7 +4567,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_voicegain )
+ CK_DLL_CGET( LiSaMulti_cget_voicegain )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	t_CKINT which = GET_NEXT_INT(ARGS);
++	t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+ 	
+     // return
+     RETURN->v_float = (t_CKFLOAT)d->voiceGain[which];
+@@ -4463,35 +4580,10 @@ CK_DLL_CGET( LiSaMulti_cget_voicegain )
+ CK_DLL_CTRL( LiSaMulti_ctrl_voicepan )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	t_CKINT which = GET_NEXT_INT(ARGS);
+-    d->voicePan[which] = (t_CKFLOAT)GET_NEXT_FLOAT(ARGS);
+-	
+-    t_CKINT i;
++    t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++    t_CKFLOAT pan = GET_NEXT_FLOAT(ARGS);
+ 
+-	for(i=0; i<LiSa_channels; i++) d->channelGain[which][i] = 0.;
+-	
+-	for(i=0; i<LiSa_channels; i++) {
+-		t_CKINT panTrunc = (t_CKINT)d->voicePan[which];
+-		//fprintf(stderr, "panTrunc = %d, panFloat = %f, i = %d\n", panTrunc, d->voicePan[which], i);
+-		if(i == panTrunc) {
+-			d->channelGain[which][i] = 1. - ( d->voicePan[which] - (t_CKFLOAT)i );
+-			if(i == LiSa_channels - 1) {
+-				d->channelGain[which][0] = 1. - d->channelGain[which][i];
+-				d->channelGain[which][0] = sqrt(d->channelGain[which][0]);
+-			}
+-			else {
+-				d->channelGain[which][i+1] = 1. - d->channelGain[which][i];
+-				d->channelGain[which][i+1] = sqrt(d->channelGain[which][i+1]);
+-			}
+-			
+-			d->channelGain[which][i] = sqrt(d->channelGain[which][i]);
+-			
+-		}
+-		
+-		//fprintf(stderr, "gain for channel %d and voice %d = %f\n", i, which, d->channelGain[which][i]);
+-	}
+-    
+-    RETURN->v_float = (t_CKFLOAT)d->voicePan[which];
++    RETURN->v_float = d->set_voice_pan( pan, which );
+ }
+ 
+ 
+@@ -4502,44 +4594,18 @@ CK_DLL_CTRL( LiSaMulti_ctrl_voicepan )
+ CK_DLL_CGET( LiSaMulti_cget_voicepan )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	t_CKINT which = GET_NEXT_INT(ARGS);
++	t_CKINT which = d->get_safe_voice( GET_NEXT_INT(ARGS) );
+ 	
+     // return
+-    RETURN->v_float = (t_CKFLOAT)d->voicePan[which];
++    RETURN->v_float = d->voicePan[which];
+ }
+ 
+ CK_DLL_CTRL( LiSaMulti_ctrl_voicepan0 )
+ {
+-	LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	t_CKINT which = 0; //voice 0 for this one
+-    d->voicePan[which] = (t_CKFLOAT)GET_NEXT_FLOAT(ARGS);
+-	
+-    t_CKINT i;
++    LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
++    t_CKFLOAT pan = GET_NEXT_FLOAT(ARGS);
+ 
+-	for(i=0; i<LiSa_channels; i++) d->channelGain[which][i] = 0.;
+-	
+-	for(i=0; i<LiSa_channels; i++) {
+-		t_CKINT panTrunc = (t_CKINT)d->voicePan[which];
+-		//fprintf(stderr, "panTrunc = %d, panFloat = %f, i = %d\n", panTrunc, d->voicePan[which], i);
+-		if(i == panTrunc) {
+-			d->channelGain[which][i] = 1. - ( d->voicePan[which] - (t_CKFLOAT)i );
+-			if(i == LiSa_channels - 1) {
+-				d->channelGain[which][0] = 1. - d->channelGain[which][i];
+-				d->channelGain[which][0] = sqrt(d->channelGain[which][0]);
+-			}
+-			else {
+-				d->channelGain[which][i+1] = 1. - d->channelGain[which][i];
+-				d->channelGain[which][i+1] = sqrt(d->channelGain[which][i+1]);
+-			}
+-			
+-			d->channelGain[which][i] = sqrt(d->channelGain[which][i]);
+-			
+-		}
+-		
+-		//fprintf(stderr, "gain for channel %d and voice %d = %f\n", i, which, d->channelGain[which][i]);
+-	}
+-    
+-    RETURN->v_float = (t_CKFLOAT)d->voicePan[which];
++    RETURN->v_float = d->set_voice_pan( pan );
+ }
+ 
+ CK_DLL_CGET( LiSaMulti_cget_voicepan0 )
+@@ -4547,7 +4613,7 @@ CK_DLL_CGET( LiSaMulti_cget_voicepan0 )
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+ 	
+ 	// return
+-    RETURN->v_float = (t_CKFLOAT)d->voicePan[0];
++    RETURN->v_float = d->voicePan[0];
+ }
+ 
+ //-----------------------------------------------------------------------------
+@@ -4608,8 +4674,15 @@ CK_DLL_CGET( LiSaMulti_cget_voice )
+ CK_DLL_CTRL( LiSaMulti_ctrl_rampup )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT voice = GET_NEXT_INT(ARGS);
+-    t_CKDUR len = GET_NEXT_DUR(ARGS);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to set ramp up length on uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
++
++    t_CKINT voice = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++    t_CKDUR len = (t_CKDUR)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+ 
+     d->ramp_up(voice, len);
+     
+@@ -4620,7 +4693,14 @@ CK_DLL_CTRL( LiSaMulti_ctrl_rampup )
+ CK_DLL_CTRL( LiSaMulti_ctrl_rampup0 )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKDUR len = GET_NEXT_DUR(ARGS);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to set ramp up length on uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
++
++    t_CKDUR len = (t_CKDUR)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+ 
+     d->ramp_up(0, len);
+     
+@@ -4635,19 +4715,33 @@ CK_DLL_CTRL( LiSaMulti_ctrl_rampup0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_rampdown )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT voice = GET_NEXT_INT(ARGS);
+-    t_CKDUR len = GET_NEXT_DUR(ARGS);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to set ramp down length on uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
++
++    t_CKINT voice = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++    t_CKDUR len = (t_CKDUR)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+ 
+     d->ramp_down(voice, len);
+     
+-    RETURN->v_dur = (t_CKDUR)len;    
++    RETURN->v_dur = (t_CKDUR)len;
+ }
+ 
+ 
+ CK_DLL_CTRL( LiSaMulti_ctrl_rampdown0 )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKDUR len = GET_NEXT_DUR(ARGS);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to set ramp down length on uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
++
++    t_CKDUR len = (t_CKDUR)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+ 
+     d->ramp_down(0, len);
+     
+@@ -4662,7 +4756,14 @@ CK_DLL_CTRL( LiSaMulti_ctrl_rampdown0 )
+ CK_DLL_CTRL( LiSaMulti_ctrl_rec_ramplen )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKDUR newramplen = GET_NEXT_DUR(ARGS);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to set recording ramp length on uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
++
++    t_CKDUR newramplen = (t_CKDUR)d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
+     d->set_rec_ramplen(newramplen);
+     
+     RETURN->v_dur = (t_CKDUR)newramplen;    
+@@ -4679,7 +4780,7 @@ CK_DLL_CTRL( LiSaMulti_ctrl_maxvoices )
+     d->maxvoices = GET_NEXT_INT(ARGS);
+ 	if( d->maxvoices > LiSa_MAXVOICES) {
+ 		d->maxvoices = LiSa_MAXVOICES;
+-		fprintf(stderr, "LiSa: MAXVOICES limited to  %d.\n", LiSa_MAXVOICES);
++		EM_error2( 0, "LiSa: MAXVOICES limited to  %d", LiSa_MAXVOICES );
+ 	}
+     RETURN->v_int = d->maxvoices;
+ }
+@@ -4705,21 +4806,33 @@ CK_DLL_CGET( LiSaMulti_cget_maxvoices )
+ CK_DLL_CGET( LiSaMulti_cget_value )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-    t_CKINT voice = GET_NEXT_INT(ARGS);
+-    t_CKDOUBLE where = (t_CKDOUBLE) GET_NEXT_DUR(ARGS);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to grab value from uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
+ 
+-    // return
+-    RETURN->v_dur = (t_CKDUR)d->getSamp(where, voice);
++    t_CKINT voice = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++    t_CKDOUBLE where = d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
++
++    RETURN->v_dur = (t_CKDUR)d->getSamp( where, voice );
+ }
+ 
+ 
+ CK_DLL_CGET( LiSaMulti_cget_value0 )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
++    if( !d->mdata )
++    {
++        EM_error2( 0, "LiSa: Trying to grab value from uninitialized buffer; ignoring" );
++        RETURN->v_dur = 0.;
++        return;
++    }
+ 
+-    t_CKDOUBLE where = (t_CKDOUBLE) GET_NEXT_DUR(ARGS);
+-    // return
+-    RETURN->v_dur = (t_CKDUR)d->getSamp(where, 0);
++    t_CKDOUBLE where = d->normalize_index( (t_CKDOUBLE)GET_NEXT_DUR(ARGS) );
++
++    RETURN->v_dur = (t_CKDUR)d->getSamp( where );
+ }
+ 
+ 
+@@ -4731,6 +4844,11 @@ CK_DLL_CTRL( LiSaMulti_ctrl_track )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+     d->track = (t_CKINT)GET_NEXT_INT(ARGS);
++    if( d->track < 0 || d->track > 2 )
++    {
++        EM_error2( 0, "LiSa: Invalid tracking mode %d; using 0", d->track );
++        d->track = 0;
++    }
+     
+     RETURN->v_int = d->track;
+ }
+@@ -4756,12 +4874,8 @@ CK_DLL_CGET( LiSaMulti_cget_track )
+ CK_DLL_CGET( LiSaMulti_cget_playing )
+ {
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	t_CKINT voice = GET_NEXT_INT(ARGS);
+-	if(voice >= d->maxvoices) {
+-		fprintf(stderr, "LiSa: requesting info greater than MAXVOICES %d.\n", LiSa_MAXVOICES);
+-		voice = 0;
+-	}
+-	
++	t_CKINT voice = d->get_safe_voice( GET_NEXT_INT(ARGS) );
++
+     // return
+     RETURN->v_int = d->play[voice];
+ }
+-- 
+1.7.1
+

@@ -1,0 +1,91 @@
+From 20d64be2aa8ed346a337a78a68423c4a769c32ea Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Fri, 7 Sep 2012 17:15:52 +0200
+Subject: [PATCH 03/12] allow opening arbitrary numbers of output/input channels (jack backend)
+
+also don't connect them automatically (done by my Jack patchbay)
+---
+ RtAudio/RtAudio.cpp |    6 ++++++
+ digiio_rtaudio.cpp  |    4 ++++
+ 2 files changed, 10 insertions(+), 0 deletions(-)
+
+diff --git a/src/RtAudio/RtAudio.cpp b/src/RtAudio/RtAudio.cpp
+index 1dec41b..5aa2b8a 100644
+--- a/src/RtAudio/RtAudio.cpp
++++ b/src/RtAudio/RtAudio.cpp
+@@ -2095,9 +2095,12 @@ bool RtApiJack :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
+ 
+   // Count the available ports containing the client name as device
+   // channels.  Jack "input ports" equal RtAudio output channels.
++#if 0
+   unsigned int nChannels = 0;
++#endif
+   unsigned long flag = JackPortIsInput;
+   if ( mode == INPUT ) flag = JackPortIsOutput;
++#if 0
+   ports = jack_get_ports( client, deviceName.c_str(), NULL, flag );
+   if ( ports ) {
+     while ( ports[ nChannels ] ) nChannels++;
+@@ -2110,6 +2113,7 @@ bool RtApiJack :: probeDeviceOpen( unsigned int device, StreamMode mode, unsigne
+     errorText_ = errorStream_.str();
+     return FAILURE;
+   }
++#endif
+ 
+   // Check the jack server sample rate.
+   unsigned int jackRate = jack_get_sample_rate( client );
+@@ -2352,6 +2356,7 @@ void RtApiJack :: startStream( void )
+     goto unlock;
+   }
+ 
++#if 0
+   const char **ports;
+ 
+   // Get the list of available ports.
+@@ -2400,6 +2405,7 @@ void RtApiJack :: startStream( void )
+     }
+     free(ports);
+   }
++#endif
+ 
+   handle->drainCounter = 0;
+   handle->internalDrain = false;
+diff --git a/src/digiio_rtaudio.cpp b/src/digiio_rtaudio.cpp
+index d509181..c0bd35c 100644
+--- a/src/digiio_rtaudio.cpp
++++ b/src/digiio_rtaudio.cpp
+@@ -511,6 +511,7 @@ BOOL__ Digitalio::initialize( DWORD__ num_dac_channels,
+             {
+                 // get the default
+                 m_dac_n = m_rtaudio->getDefaultOutputDevice();
++#if 0
+                 
+                 // ensure correct channel count if default device is requested
+                 RtAudio::DeviceInfo device_info = m_rtaudio->getDeviceInfo(m_dac_n);
+@@ -538,6 +539,7 @@ BOOL__ Digitalio::initialize( DWORD__ num_dac_channels,
+                         return m_init = FALSE;
+                     }
+                 }
++#endif
+             }
+             else
+             {
+@@ -551,6 +553,7 @@ BOOL__ Digitalio::initialize( DWORD__ num_dac_channels,
+             if( m_adc_n == 0 )
+             {
+                 m_adc_n = m_rtaudio->getDefaultInputDevice();
++#if 0
+                 
+                 // ensure correct channel count if default device is requested
+                 RtAudio::DeviceInfo device_info = m_rtaudio->getDeviceInfo(m_adc_n);
+@@ -577,6 +580,7 @@ BOOL__ Digitalio::initialize( DWORD__ num_dac_channels,
+                         return m_init = FALSE;
+                     }
+                 }
++#endif
+             }
+             else
+             {
+-- 
+1.7.1
+

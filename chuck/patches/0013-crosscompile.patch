@@ -1,0 +1,35 @@
+diff --git a/makefile b/makefile
+index 077b879..134b492 100644
+--- a/src/makefile
++++ b/src/makefile
+@@ -24,11 +24,11 @@ osx linux-oss linux-jack linux-alsa win32 osx-rl: chuck
+ 
+ CK_VERSION=1.3.1.1
+ 
+-LEX=flex
+-YACC=bison
+-CC=gcc
+-CXX=gcc
+-LD=g++
++LEX?=flex
++YACC?=bison
++CC?=gcc
++CXX?=g++
++LD=$(CXX)
+ 
+ ifneq ($(CHUCK_STAT),)
+ CFLAGS+= -D__CHUCK_STAT_TRACK__
+@@ -120,11 +120,11 @@ chuck.yy.c: chuck.lex
+ 	$(LEX) -ochuck.yy.c chuck.lex
+ 
+ $(COBJS): %.o: %.c
+-	$(CC) $(CFLAGS) $(ARCHOPTS) -c $< -o $@
++	$(CC) $(CFLAGS) $(CPPFLAGS) $(ARCHOPTS) -c $< -o $@
+ 	@$(CC) -MM $(CFLAGSDEPEND) $< > $*.d
+ 
+ $(CXXOBJS): %.o: %.cpp
+-	$(CXX) $(CFLAGS) $(ARCHOPTS) -c $< -o $@
++	$(CXX) $(CFLAGS) $(CXXFLAGS) $(CPPFLAGS) $(ARCHOPTS) -c $< -o $@
+ 	@$(CXX) -MM $(CFLAGSDEPEND) $< > $*.d
+ 
+ clean: 

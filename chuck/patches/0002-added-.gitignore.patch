@@ -1,0 +1,27 @@
+From ced8afbafed3688b771a4a773c4a11bb72371a0b Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Fri, 7 Sep 2012 17:14:29 +0200
+Subject: [PATCH 02/12] added .gitignore
+
+---
+ .gitignore |    8 ++++++++
+ 1 files changed, 8 insertions(+), 0 deletions(-)
+ create mode 100644 .gitignore
+
+diff --git a/src/.gitignore b/src/.gitignore
+new file mode 100644
+index 0000000..ffe77af
+--- /dev/null
++++ b/src/.gitignore
+@@ -0,0 +1,8 @@
++*.o
++*.d
++chuck
++
++chuck.output
++chuck.tab.c
++chuck.tab.h
++chuck.yy.c
+-- 
+1.7.1
+

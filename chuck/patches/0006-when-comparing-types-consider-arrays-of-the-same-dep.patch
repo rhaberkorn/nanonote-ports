@@ -1,0 +1,32 @@
+From d143313380e55196b8d34500047ed52b6930c72d Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Fri, 7 Sep 2012 17:21:58 +0200
+Subject: [PATCH 06/12] when comparing types consider arrays of the same depth and descended type as compatible
+
+---
+ chuck_type.cpp |    9 +++++++++
+ 1 files changed, 9 insertions(+), 0 deletions(-)
+
+diff --git a/src/chuck_type.cpp b/src/chuck_type.cpp
+index c1aa326..4f817b8 100644
+--- a/src/chuck_type.cpp
++++ b/src/chuck_type.cpp
+@@ -4091,6 +4091,15 @@ t_CKBOOL operator <=( const Chuck_Type & lhs, const Chuck_Type & rhs )
+         curr = curr->parent;
+     }
+ 
++    // if both are arrays of the same depth
++    if( lhs.array_type && rhs.array_type &&
++        lhs.array_depth == rhs.array_depth )
++    {
++        // if lhs array type is a child of rhs array type
++        for( curr = lhs.array_type->parent; curr; curr = curr->parent )
++            if( *curr == *rhs.array_type ) return TRUE;
++    }
++
+     // if lhs is null and rhs is a object
+     if( lhs == t_null && (rhs <= t_object) ) return TRUE;
+     
+-- 
+1.7.1
+

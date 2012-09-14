@@ -1,0 +1,35 @@
+From 006521d0799aecc18f83b9fa22604169145c64ed Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Fri, 7 Sep 2012 17:43:56 +0200
+Subject: [PATCH 07/12] prevent unused-return-value warning
+
+ordinarily, the return value of every fseek/fwrite/fread should be checked
+---
+ ugen_stk.cpp |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletions(-)
+
+diff --git a/src/ugen_stk.cpp b/src/ugen_stk.cpp
+index f63eb6e..3a92ca2 100644
+--- a/src/ugen_stk.cpp
++++ b/src/ugen_stk.cpp
+@@ -17333,7 +17333,8 @@ void WvOut :: closeMatFile( void )
+ 
+   SINT32 headsize, temp;
+   fseek(fd, 132, SEEK_SET);  // jump to header size
+-  fread(&headsize, 4, 1, fd);
++  if( fread(&headsize, 4, 1, fd) < 4 ) goto close;
++
+   temp = headsize;
+   headsize += (SINT32) (totalCount * 8 * channels);
+   fseek(fd, 132, SEEK_SET);
+@@ -17344,6 +17345,7 @@ void WvOut :: closeMatFile( void )
+   temp = totalCount * 8 * channels;
+   fwrite(&temp, 4, 1, fd);
+ 
++ close:
+   fclose(fd);
+ }
+ 
+-- 
+1.7.1
+

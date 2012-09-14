@@ -1,0 +1,25 @@
+From 713870b2d28ad236481341c5714b325fa82fa038 Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Fri, 7 Sep 2012 20:43:43 +0200
+Subject: [PATCH 08/12] ensure that chuck is linked against manually built libjack
+
+previously the manually built libjack was found at runtime but not linked to at compile-time
+---
+ makefile.jack |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/src/makefile.jack b/src/makefile.jack
+index e09939a..a64ef3b 100644
+--- a/src/makefile.jack
++++ b/src/makefile.jack
+@@ -1,4 +1,7 @@
+ 
++CFLAGS+= -I/usr/local/include
++LDFLAGS+= -L/usr/local/lib
++
+ CFLAGS+= -D__UNIX_JACK__ -D__LINUX_JACK__ -fno-strict-aliasing -D__CK_SNDFILE_NATIVE__
+ LDFLAGS+= -lasound -ljack -lstdc++ -ldl -lm -lsndfile -lpthread
+ 
+-- 
+1.7.1
+

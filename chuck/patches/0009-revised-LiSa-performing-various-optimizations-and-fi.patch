@@ -1,0 +1,308 @@
+From dad4ab47c2b008f6cf946e268d8b49702e017af3 Mon Sep 17 00:00:00 2001
+From: Robin Haberkorn <robin.haberkorn@googlemail.com>
+Date: Sat, 8 Sep 2012 02:43:38 +0200
+Subject: [PATCH 09/12] revised LiSa, performing various optimizations and fixing a lot of bugs introduced with v1.3.0.0
+
+ * properly support multi-channels by using tickf. fixes expressions like "LiSa => Gain g" which are now properly chucked
+ * prevent unnecessary copying of output samples
+ * prevent generating output samples if buffer is unitialized (size unset)
+ * use LiSa_channels macro instead of class attribute - should allow the compiler to perform loop unrolling in the time-critical tick/tickf functions
+ * allow mono LiSa as a compile time option (#define LiSa_channels 1). useful for increasing performance where absolutely necessary.
+ * initialize all voices' channel gain with 1 instead of setting the gain to 0.707 for the first two channels (resulted in lower gain for existing pre-v1.3.0.0 LiSa patches)
+ * fixed memleak on LiSa destruction and buffer resize
+ * initialize newly allocated buffers (don't know why this didn't cause any trouble)
+ * fixed tracking modes 1 and 2 which were completely broken beginning with v1.3.0.0!!!!
+---
+ ugen_xxx.cpp |  154 ++++++++++++++++++++++++++++++----------------------------
+ ugen_xxx.h   |    1 +
+ 2 files changed, 81 insertions(+), 74 deletions(-)
+
+diff --git a/src/ugen_xxx.cpp b/src/ugen_xxx.cpp
+index c634473..dfb1bca 100644
+--- a/src/ugen_xxx.cpp
++++ b/src/ugen_xxx.cpp
+@@ -857,17 +857,15 @@ error:
+ }
+ 
+ 
+-
++#define LiSa_channels 8 //max channels for multichannel LiSa
+ 
+ // LiSa (live sampling data offset)
+-//static t_CKUINT LiSaBasic_offset_data = 0;
+ static t_CKUINT LiSaMulti_offset_data = 0;
+ 
+ //-----------------------------------------------------------------------------
+ // name: lisa_query()
+ // desc: ...
+ //-----------------------------------------------------------------------------
+-#define LiSa_channels 8 //max channels for multichannel LiSa
+ DLL_QUERY lisa_query( Chuck_DL_Query * QUERY )
+ {
+     Chuck_Env * env = Chuck_Env::instance();
+@@ -878,21 +876,20 @@ DLL_QUERY lisa_query( Chuck_DL_Query * QUERY )
+     //              - probably don't need the others anymore....
+     // author: Dan Trueman (dan /at/ music.princeton.edu)
+     //---------------------------------------------------------------------
+-	
+-	
+-    if( !type_engine_import_ugen_begin( env, "LiSa", "UGen_Stereo", env->global(),
++
++#if LiSa_channels == 1
++    if( !type_engine_import_ugen_begin( env, "LiSa", "UGen", env->global(),
+                                         LiSaMulti_ctor, LiSaMulti_dtor,
+-                                        LiSaMulti_tick, LiSaMulti_pmsg, 1, LiSa_channels ))
++                                        LiSaMulti_tick, LiSaMulti_pmsg ))
+         return FALSE;
+-	
+-									
+-	/*
+-	if( !type_engine_import_ugen_begin( env, "LiSa", "UGen", env->global(),
++#else /* LiSa_channels > 1 */
++    if( !type_engine_import_ugen_begin( env, "LiSa", "UGen_Stereo", env->global(),
+                                         LiSaMulti_ctor, LiSaMulti_dtor,
+-                                        LiSaMulti_tick, LiSaMulti_pmsg))
++                                        NULL, LiSaMulti_tickf,
++                                        LiSaMulti_pmsg, 1, LiSa_channels ))
+         return FALSE;
+-	*/
+-	
++#endif
++
+     // set/get buffer size
+     func = make_new_mfun( "dur", "duration", LiSaMulti_size );
+     func->add_arg( "dur", "val" );
+@@ -3556,7 +3553,6 @@ LiSa updates/fixes:
+ struct LiSaMulti_data
+ {
+     SAMPLE * mdata;
+-	SAMPLE * outsamples; //samples by channel to send out
+     t_CKINT mdata_len;
+     t_CKINT maxvoices;
+     t_CKINT loop_start[LiSa_MAXVOICES], loop_end[LiSa_MAXVOICES], loop_end_rec;
+@@ -3575,18 +3571,24 @@ struct LiSaMulti_data
+     t_CKBOOL rampup[LiSa_MAXVOICES], rampdown[LiSa_MAXVOICES];
+     
+     t_CKINT track;
+-	
+-	t_CKINT num_chans;
++
++    ~LiSaMulti_data()
++    {
++        SAFE_DELETE( mdata );
++    }
+ 
+     // allocate memory, length in samples
+     inline int buffer_alloc(t_CKINT length)
+     {
+-        mdata = (SAMPLE *)malloc((length + 1) * sizeof(SAMPLE)); //extra sample for safety....
++        SAFE_DELETE( mdata );
++
++        mdata = new SAMPLE[length + 1]; //extra sample for safety....
+         if(!mdata)  {
+             fprintf(stderr, "LiSaBasic: unable to allocate memory!\n");
+             return false;
+         }
+-            
++        clear_buf();
++
+         mdata_len = length;
+         maxvoices = 10; // default; user can set
+         rec_ramplen = 0.;
+@@ -3614,11 +3616,9 @@ struct LiSaMulti_data
+             rampup_len_inv[i] = rampdown_len_inv[i] = 1.;
+             rampctr[i] = 0.;
+ 			
+-			for(t_CKINT j=2; j<num_chans; j++) {
++			for(t_CKINT j=0; j<LiSa_channels; j++) {
+ 				channelGain[i][j] = 1.;
+ 			}
+-			channelGain[i][0] = 0.707;
+-			channelGain[i][1] = 0.707;
+         }
+         
+         return true;
+@@ -3796,44 +3796,53 @@ struct LiSaMulti_data
+ 	//for simple stereo panning of a particular voice, and...
+ 	//	l.channelGain(voice, channel, gain)
+ 	//to set the gain for a particular voice going to a particular channel; good for >2 voices (like 6 channels!)
+-    inline SAMPLE * tick_multi( SAMPLE in)
++    inline void tick_multi(SAMPLE in, SAMPLE *out)
+     {
++        for( t_CKINT i = 0; i < LiSa_channels; i++ ) out[i] = SILENCE;
+ 
+-        SAMPLE tempsample = 0.;
++        switch( track )
++        {
++        case 0:
++            recordSamp( in );
++            for( t_CKINT i = 0; i < maxvoices; i++ )
++            {
++                if( play[i] )
++                {
++                    SAMPLE tempsample = getNextSamp( i );
++                    for( t_CKINT j = 0; j < LiSa_channels; j++ )
++                        out[j] += tempsample * channelGain[i][j]; //channelGain should return gain for voice i in channel j
++                }
++            }
++            break;
+ 
+-		for(t_CKINT i=0;i<num_chans;i++) outsamples[i] = 0.;
+-		
+-		if(!mdata) return outsamples;
+-        
+-        recordSamp(in);
+-
+-        if(track==0) {
+-            for (t_CKINT i=0; i<maxvoices; i++) {
+-                if(play[i]) {
+-					tempsample = getNextSamp(i);
+-					for(t_CKINT j=0;j<num_chans;j++) {
+-						//outsamples[j] += tempsample; //mono for now, testing...
+-						outsamples[j] += tempsample * channelGain[i][j]; //channelGain should return gain for voice i in channel j
+-					}
+-				}
++        case 1:
++            if( in < 0. ) in = -in;
++            for( t_CKINT i = 0; i < maxvoices; i++ )
++            {
++                if( play[i] )
++                {
++                    SAMPLE tempsample = getSamp( (t_CKDOUBLE)in * (loop_end[i] - loop_start[i]) + loop_start[i], i );
++                    for( t_CKINT j = 0; j < LiSa_channels; j++ )
++                        out[j] += tempsample * channelGain[i][j];
++                }
+             }
+-        } else if(track==1) {
+-            if(in<0.) in = -in; 
+-			for (t_CKINT i=0; i<maxvoices; i++) {
+-				if(play[i]) tempsample += getSamp((t_CKDOUBLE)in * (loop_end[i] - loop_start[i]) + loop_start[i], i);
+-			}
+-        } else if(track==2 && play[0]) {
+-            if(in<0.) in = -in; //only use voice 0 when tracking with durs.
+-            tempsample = getSamp( (t_CKDOUBLE)in, 0 );
+-        }
++            break;
+ 
+-        return outsamples;
++        case 2:
++            if( in < 0. ) in = -in; //only use voice 0 when tracking with durs.
++            if( play[0] )
++            {
++                SAMPLE tempsample = getSamp( (t_CKDOUBLE)in, 0 );
++                for( t_CKINT j = 0; j < LiSa_channels; j++ )
++                    out[j] = tempsample * channelGain[0][j];
++            }
++            break;
++        }
+     }
+     
+     inline void clear_buf()
+     {
+-        for (t_CKINT i = 0; i < mdata_len; i++)
+-            mdata[i] = 0.;
++        memset( mdata, 0, mdata_len*sizeof(SAMPLE) );
+     }
+     
+     inline t_CKINT get_free_voice()
+@@ -3907,16 +3916,7 @@ CK_DLL_CTOR( LiSaMulti_ctor )
+     LiSaMulti_data * f =  new LiSaMulti_data;
+     memset( f, 0, sizeof(LiSaMulti_data) );
+ 			
+-	Chuck_UGen * ugen = (Chuck_UGen *)SELF;
+-	f->num_chans = ugen->m_multi_chan_size;
+-    //fprintf(stderr, "LiSa: number of channels = %d\n", f->num_chans);	
+-	f->outsamples = new SAMPLE[f->num_chans];
+-	memset( f->outsamples, 0, (f->num_chans)*sizeof(SAMPLE) );
+-	
+     OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data) = (t_CKUINT)f;
+-		
+-
+-	
+ }
+ 
+ 
+@@ -3941,18 +3941,24 @@ CK_DLL_DTOR( LiSaMulti_dtor )
+ //-----------------------------------------------------------------------------
+ CK_DLL_TICK( LiSaMulti_tick )
+ {
+-	Chuck_UGen * ugen = (Chuck_UGen *)SELF;
+-
+     LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
+-	SAMPLE * temp_out_samples = d->tick_multi( in );
+-	
+-	for( t_CKUINT i = 0; i < ugen->m_multi_chan_size; i++ )
+-		ugen->m_multi_chan[i]->m_sum = ugen->m_multi_chan[i]->m_current = temp_out_samples[i]; //yay this works!
+-		//out[i] = temp_out_samples[i];
+-	
++    if( !d->mdata ) return FALSE;
++
++    d->tick_multi( in, out );
++
+     return TRUE;
+ }
+ 
++CK_DLL_TICKF( LiSaMulti_tickf )
++{
++    LiSaMulti_data * d = (LiSaMulti_data *)OBJ_MEMBER_UINT(SELF, LiSaMulti_offset_data);
++    if( !d->mdata ) return FALSE;
++
++    for( t_CKUINT frame = 0; frame < nframes; frame++ )
++        d->tick_multi( in[frame], out + frame*LiSa_channels );
++
++    return TRUE;
++}
+ 
+ //-----------------------------------------------------------------------------
+ // name: LiSaMulti_size()
+@@ -4462,14 +4468,14 @@ CK_DLL_CTRL( LiSaMulti_ctrl_voicepan )
+ 	
+     t_CKINT i;
+ 
+-	for(i=0; i<d->num_chans; i++) d->channelGain[which][i] = 0.;
++	for(i=0; i<LiSa_channels; i++) d->channelGain[which][i] = 0.;
+ 	
+-	for(i=0; i<d->num_chans; i++) {
++	for(i=0; i<LiSa_channels; i++) {
+ 		t_CKINT panTrunc = (t_CKINT)d->voicePan[which];
+ 		//fprintf(stderr, "panTrunc = %d, panFloat = %f, i = %d\n", panTrunc, d->voicePan[which], i);
+ 		if(i == panTrunc) {
+ 			d->channelGain[which][i] = 1. - ( d->voicePan[which] - (t_CKFLOAT)i );
+-			if(i == d->num_chans - 1) {
++			if(i == LiSa_channels - 1) {
+ 				d->channelGain[which][0] = 1. - d->channelGain[which][i];
+ 				d->channelGain[which][0] = sqrt(d->channelGain[which][0]);
+ 			}
+@@ -4510,14 +4516,14 @@ CK_DLL_CTRL( LiSaMulti_ctrl_voicepan0 )
+ 	
+     t_CKINT i;
+ 
+-	for(i=0; i<d->num_chans; i++) d->channelGain[which][i] = 0.;
++	for(i=0; i<LiSa_channels; i++) d->channelGain[which][i] = 0.;
+ 	
+-	for(i=0; i<d->num_chans; i++) {
++	for(i=0; i<LiSa_channels; i++) {
+ 		t_CKINT panTrunc = (t_CKINT)d->voicePan[which];
+ 		//fprintf(stderr, "panTrunc = %d, panFloat = %f, i = %d\n", panTrunc, d->voicePan[which], i);
+ 		if(i == panTrunc) {
+ 			d->channelGain[which][i] = 1. - ( d->voicePan[which] - (t_CKFLOAT)i );
+-			if(i == d->num_chans - 1) {
++			if(i == LiSa_channels - 1) {
+ 				d->channelGain[which][0] = 1. - d->channelGain[which][i];
+ 				d->channelGain[which][0] = sqrt(d->channelGain[which][0]);
+ 			}
+diff --git a/src/ugen_xxx.h b/src/ugen_xxx.h
+index 8e18af6..e0663ee 100644
+--- a/src/ugen_xxx.h
++++ b/src/ugen_xxx.h
+@@ -189,6 +189,7 @@ CK_DLL_CGET( sndbuf_cget_valueAt );
+ CK_DLL_CTOR( LiSaMulti_ctor );
+ CK_DLL_DTOR( LiSaMulti_dtor );
+ CK_DLL_TICK( LiSaMulti_tick );
++CK_DLL_TICKF( LiSaMulti_tickf );
+ CK_DLL_PMSG( LiSaMulti_pmsg );
+ CK_DLL_CTRL( LiSaMulti_size );
+ CK_DLL_CTRL( LiSaMulti_cget_size );
+-- 
+1.7.1
+
