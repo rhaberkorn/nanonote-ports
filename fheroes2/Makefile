@@ -1,12 +1,15 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=fheroes2
-PKG_VERSION:=r1954
-PKG_RELEASE:=1
+PKG_REV:=3277
+PKG_VERSION:=r$(PKG_REV)
+PKG_RELEASE:=2
 
-PKG_SOURCE:=fheroes2-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=@SF/fheroes2
-PKG_MD5SUM:=612a4fe2d18b748bc4367ffddff734b5
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_URL:=svn://svn.code.sf.net/p/fheroes2/code/trunk/fheroes2
+PKG_SOURCE_PROTO:=svn
+PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
+PKG_SOURCE_VERSION:=$(PKG_REV)
 
 PKG_BUILD_DIR=$(BUILD_DIR)/fheroes2-$(PKG_VERSION)
 
@@ -15,7 +18,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/fheroes2
   SECTION:=games
   CATEGORY:=Games
-  DEPENDS:=+libsdl +libsdl-image +libpng +zlib
+  DEPENDS:=+libsdl +libsdl-image +libpng +zlib +libstdcpp
   TITLE:=Free Heroes 2 Engine
   URL:=http://sourceforge.net/projects/fheroes2/
   MENU:=1
@@ -79,7 +82,6 @@ endif
 EXTRA_LDFLAGS += $(shell $(STAGING_DIR)/root-xburst/usr/bin/directfb-config --libs --prefix=$(STAGING_DIR)/usr)
 
 EXTRA_CPPFLAGS += \
-	-D'CONFIGURE_FHEROES2_DATA=\"/usr/share/fheroes2\"' \
 	-DWITH_KEYMAPPING -DWITHOUT_MOUSE
 
 define Build/Configure
@@ -94,7 +96,7 @@ define Package/fheroes2/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/fheroes2 $(1)/usr/bin/
 	$(INSTALL_DIR) $(1)/usr/share/fheroes2
-	$(INSTALL_DATA) $(SOURCE)/files/fheroes2.cfg $(1)/usr/share/fheroes2/
+	$(INSTALL_DATA) ./files/fheroes2.cfg $(1)/usr/share/fheroes2/
 	$(INSTALL_DIR) $(1)/usr/share/fheroes2/data
 	$(INSTALL_DIR) $(1)/usr/share/fheroes2/maps
 	$(CP) -r $(PKG_BUILD_DIR)/files $(1)/usr/share/fheroes2/

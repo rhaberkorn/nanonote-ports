@@ -1,0 +1,19 @@
+--- a/src/Makefile	2015-09-22 03:47:13.777305599 +0200
++++ b/src/Makefile	2015-09-22 03:48:24.565303557 +0200
+@@ -12,7 +12,7 @@
+ SDL_FLAGS := $(shell sdl-config --cflags)
+ endif
+ 
+-CFLAGS := $(CFLAGS) -Wall -fsigned-char
++CFLAGS := $(CFLAGS) $(CPPFLAGS) -Wall -fsigned-char
+ LDFLAGS := $(LDFLAGS)
+ LIBS :=
+ 
+--- a/src/Makefile.all	2015-09-22 03:49:00.833302511 +0200
++++ b/src/Makefile.all	2015-09-22 03:49:12.929302162 +0200
+@@ -1,4 +1,4 @@
+-AR := ar
++AR ?= ar
+ 
+ ifndef CXX
+ CXX := g++
