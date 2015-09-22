@@ -1,0 +1,43 @@
+NanoNote's OpenWRT fork only has glib2 v2.26.1
+This turns out to be sufficient
+--- a/configure.ac
++++ b/configure.ac
+@@ -77,7 +77,7 @@ AC_SUBST(DOXYGEN_HAVE_DOT)
+ AC_CHECK_PROG(SCITECO, sciteco, sciteco)
+ 
+ # Checks for libraries.
+-PKG_CHECK_MODULES(LIBGLIB, [glib-2.0 >= 2.28], [
++PKG_CHECK_MODULES(LIBGLIB, [glib-2.0 >= 2.26.1], [
+ 	CFLAGS="$CFLAGS $LIBGLIB_CFLAGS"
+ 	CXXFLAGS="$CXXFLAGS $LIBGLIB_CFLAGS"
+ 	LIBS="$LIBS $LIBGLIB_LIBS"
+--- a/src/sciteco.h	2015-09-22 04:44:52.941205805 +0200
++++ b/src/sciteco.h	2015-09-22 04:52:31.705192570 +0200
+@@ -24,6 +24,11 @@
+ 
+ #include "interface.h"
+ 
++#if !GLIB_CHECK_VERSION(2,28,0)
++#define g_slist_free_full(LIST,FUNC) \
++        g_slist_foreach(LIST, (GFunc)FUNC, NULL)
++#endif
++
+ namespace SciTECO {
+ 
+ #if TECO_INTEGER == 32
+--- a/src/spawn.cpp	2015-09-22 04:56:34.069185578 +0200
++++ b/src/spawn.cpp	2015-09-22 04:58:58.089181423 +0200
+@@ -73,6 +73,13 @@
+ 
+ #endif
+ 
++#ifndef G_SOURCE_CONTINUE
++#define G_SOURCE_CONTINUE TRUE
++#endif
++#ifndef G_SOURCE_REMOVE
++#define G_SOURCE_REMOVE FALSE
++#endif
++
+ namespace SciTECO {
+ 
+ namespace States {

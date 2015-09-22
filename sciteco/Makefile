@@ -1,63 +1,71 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=sciteco
-PKG_VERSION:=0.1
-PKG_RELEASE:=1
+PKG_VERSION:=0.6.4-git
+PKG_RELEASE:=2
+PKG_REV:=c3f7aa7252ad9adb51cef1e35f566883ef953aad
 
-PKG_SOURCE:=sciteco-$(PKG_VERSION).tar.gz
-PKG_MD5SUM:=612f02da4a521059f75835fe89508461
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION)-$(PKG_REV).tar.gz
+PKG_SOURCE_URL:=https://github.com/rhaberkorn/sciteco.git
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
+PKG_SOURCE_VERSION:=$(PKG_REV)
 
 PKG_BUILD_DIR=$(BUILD_DIR)/sciteco-$(PKG_VERSION)
 
-include $(INCLUDE_DIR)/package.mk
+#PKG_BUILD_DEPENDS:=$(PKG_NAME)/host
+#HOST_BUILD_DEPENDS:=libncurses/host glib2/host
 
-define Package/SciTECO
+include $(INCLUDE_DIR)/package.mk
+#include $(INCLUDE_DIR)/host-build.mk
+
+define Package/sciteco
   SECTION:=utils
   CATEGORY:=Utilities
-  DEPENDS:=+libncurses +glib2 +libstdcpp
-  TITLE:=Scintilla based TECO editor
-  URL:=https://github.com/rhaberkorn/sciteco
+  DEPENDS:=+libncurses +glib2 +libstdcpp +libiconv-full
+  TITLE:=Advanced TECO dialect and interactive screen editor based on Scintilla
+  URL:=http://sciteco.sf.net/
   SUBMENU:=Editors
 endef
 
-define Package/SciTECO/description
-Advanced screen based version of the TECO editor.
-NOTE: Currently, SciTECO has to be installed on the
-host platform.
+define Package/sciteco/description
+Advanced TECO dialect and interactive screen editor based on Scintilla
 endef
 
-CONFIGURE_ARGS += --with-scintilla=scintilla \
-		  --with-interface=ncurses \
-		  --disable-bootstrap
-
-define Build/Prepare
-	$(PKG_UNPACK)
-	(cd $(PKG_BUILD_DIR); \
-	$(HOST_TAR) xzf $(DL_DIR)/scintilla324.tgz; \
-	unzip -d scintilla $(DL_DIR)/scinterm_1.1.zip; \
-	mv scintilla/scinterm_1.1 scintilla/scinterm; \
-	patch -p0 <patches/scintilla-teco-control-codes.patch; \
-	)
-	$(call Build/Patch)
-endef
+CONFIGURE_ARGS += --with-interface=ncurses \
+                  --disable-bootstrap
 
 define Build/Configure
-	$(MAKE_VARS) \
-	$(MAKE) -C $(PKG_BUILD_DIR)/scintilla/scinterm \
-		$(MAKE_FLAGS)
+	(cd $(PKG_BUILD_DIR) && autoreconf -i)
 	$(call Build/Configure/Default)
 endef
 
+# FIXME: Why is this template required?
 define Build/Compile
 	$(call Build/Install/Default)
 endef
 
-define Package/SciTECO/install
+# A host-build of SciTECO is required to bootstrap
+# its build process since of course we cannot
+# rely on SciTECO's built-in bootstrapping mechanism
+# which is not designed to work with cross-builds.
+#define Host/Configure
+#	(cd $(PKG_BUILD_DIR) && autoreconf -i)
+#	$(call Host/Configure/Default)
+#endef
+#
+#define Host/Install
+#	$(call Host/Install/Default)
+#endef
+
+define Package/sciteco/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/sciteco $(1)/usr/bin/
 
 	$(INSTALL_DIR) $(1)/usr/share/sciteco
-	$(INSTALL_DATA) $(PKG_INSTALL_DIR)/usr/share/sciteco/teco.ini $(1)/usr/share/sciteco
+	$(INSTALL_DATA) $(PKG_INSTALL_DIR)/usr/share/sciteco/sample.teco_ini $(1)/usr/share/sciteco
+	cp -r $(PKG_INSTALL_DIR)/usr/share/sciteco/lib $(1)/usr/share/sciteco
 endef
 
-$(eval $(call BuildPackage,SciTECO))
+#$(eval $(call HostBuild))
+$(eval $(call BuildPackage,sciteco))
