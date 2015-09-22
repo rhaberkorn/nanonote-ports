@@ -15,7 +15,8 @@ include $(INCLUDE_DIR)/package.mk
 define Package/freeciv
   SECTION:=games
   CATEGORY:=Games
-  DEPENDS:=+libsdl +libsdl-image +libsdl-mixer +libfreetype +libiconv
+  DEPENDS:=+libsdl +libsdl-image +libsdl-mixer +libfreetype \
+           +libiconv-full +libncurses +libreadline
   TITLE:=Freeciv
   URL:=http://freeciv.wikia.com/
 endef
@@ -29,7 +30,7 @@ EXTRA_LDFLAGS += $(shell $(STAGING_DIR)/root-xburst/usr/bin/directfb-config --li
 
 EXTRA_CPPFLAGS += \
 	-DALWAYS_ROOT -DSMALL_SCREEN \
-	-DKBDMOUSE='\"$(SOURCE)/files/kbdmouse.h\"'
+	-DKBDMOUSE='\"$(shell pwd)/files/kbdmouse.h\"'
 
 CONFIGURE_ARGS += \
 	--enable-ipv6=no \
