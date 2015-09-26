@@ -2,8 +2,8 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=sciteco
 PKG_VERSION:=0.6.4-git
-PKG_RELEASE:=2
-PKG_REV:=c3f7aa7252ad9adb51cef1e35f566883ef953aad
+PKG_RELEASE:=3
+PKG_REV:=21e0d302fc849d9f8827b9f2cb93472f7c30fafe
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION)-$(PKG_REV).tar.gz
 PKG_SOURCE_URL:=https://github.com/rhaberkorn/sciteco.git
